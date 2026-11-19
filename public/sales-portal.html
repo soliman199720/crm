@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>بوابة المبيعات ومتابعة العملاء | نظام إدارة العملاء CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="css/sales-portal.css?v=15">
+  <link rel="stylesheet" href="css/global-loader.css">
+  <link rel="stylesheet" href="css/chat-widget.css?v=5">
+</head>
+<body class="sales-portal-body">
+
+  <!-- مؤشر التحميل الموحد للمنظومة -->
+  <div class="global-crm-loader" id="globalCrmLoader">
+    <div class="global-loader-ambient"></div>
+    <div class="global-loader-content">
+      <div class="global-loader-box">
+        <div class="global-loader-ring"></div>
+        <div class="global-loader-icon">
+          <i class="fa-solid fa-briefcase"></i>
+        </div>
+      </div>
+      <div class="global-loader-brand">
+        <h3>بوابة المبيعات <span>CRM Sales</span></h3>
+        <p><i class="fa-solid fa-circle-notch fa-spin"></i> جاري تحديث مسار الصفقات...</p>
+      </div>
+      <div class="global-loader-track">
+        <div class="global-loader-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- إضاءة خلفية ناعمة -->
+  <div class="ambient-glow"></div>
+
+  <!-- الشريط العلوي المستقل لمسؤول المبيعات -->
+  <header class="sales-topbar">
+    <div class="brand-group">
+      <div class="sales-logo-badge">
+        <i class="fa-solid fa-briefcase"></i>
+      </div>
+      <div>
+        <h1 class="portal-title">بوابة المبيعات <span>Sales Portal</span></h1>
+        <p class="portal-desc">لوحة متابعة وإغلاق صفقات العملاء &bull; قسم المبيعات CRM</p>
+      </div>
+    </div>
+
+    <!-- شريط التبديل السريع بين الصفقات النشطة والأرشيف المدمج في نفس الصفحة -->
+    <nav class="sales-nav-switcher">
+      <button type="button" class="nav-tab-btn active" id="btnNavActive" onclick="switchPortalView('active')" title="الصفقات الجارية والنشطة">
+        <i class="fa-solid fa-bolt"></i>
+        <span>الصفقات النشطة</span>
+        <span class="nav-tab-badge" id="navActiveBadge">0</span>
+      </button>
+      <button type="button" class="nav-tab-btn nav-archive" id="btnNavArchive" onclick="switchPortalView('archive')" title="أرشيف الصفقات المنتهية (تعاقد / ملغي)">
+        <i class="fa-solid fa-box-archive"></i>
+        <span>أرشيف المنتهية 📁</span>
+        <span class="nav-tab-badge" id="navArchiveBadge">0</span>
+      </button>
+    </nav>
+
+    <!-- مؤشر حالة الجلسة والاتصال -->
+    <div class="session-live-pill">
+      <span class="pulse-dot"></span>
+      <span id="liveStatusText">جلسة نشطة &bull; متصل بالنظام</span>
+    </div>
+
+    <!-- معلومات مسؤول السيلز وزر تسجيل الخروج -->
+    <div class="sales-profile-actions">
+      <!-- زر جرس التنبيهات الذكي للمتابعات المؤجلة -->
+      <div class="reminder-bell-wrapper">
+        <button class="btn-reminder-bell" id="reminderBellBtn" onclick="toggleRemindersDropdown(event)" title="تنبيهات المتابعات المؤجلة">
+          <i class="fa-solid fa-bell"></i>
+          <span class="bell-badge d-none" id="reminderBellBadge">0</span>
+        </button>
+
+        <!-- القائمة المنسدلة للتنبيهات المستحقة -->
+        <div class="reminders-dropdown d-none" id="remindersDropdown">
+          <div class="dropdown-header">
+            <div class="dropdown-title">
+              <i class="fa-solid fa-bell"></i>
+              <span>مواعيد الاتصال المستحقة</span>
+            </div>
+            <span class="dropdown-badge" id="dropdownBadgeText">0 مستحق</span>
+          </div>
+          <div class="reminders-list" id="remindersList">
+            <!-- يتم تعبئة التنبيهات المستحقة والقادمة ديناميكياً بواسطة JS -->
+          </div>
+          <div class="dropdown-footer">
+            <small><i class="fa-solid fa-rotate"></i> يتم فحص وتحديث التنبيهات آلياً</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="sales-badge">
+        <div class="avatar-circle">
+          <i class="fa-solid fa-user-tie"></i>
+        </div>
+        <div class="sales-text">
+          <div class="sales-name-row">
+            <strong id="salesNameDisplay">مسؤول المبيعات</strong>
+            <span class="role-chip">سيلز معتمد</span>
+          </div>
+          <small id="salesEmailDisplay">sales@crm.com</small>
+        </div>
+      </div>
+      <button class="btn-logout" id="logoutBtn" onclick="handleLogout()" title="تسجيل الخروج">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+        <span>خروج</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- الحاوية الرئيسية -->
+  <main class="sales-container">
+
+    <!-- لافتة الترحيب الشخصية -->
+    <section class="sales-welcome-banner">
+      <div class="banner-content">
+        <h2>مرحباً بك يا <span id="welcomeSalesName">...</span> 👋</h2>
+        <p>هذه لوحة التحكم الخاصة بك لمتابعة صفقاتك وعملائك المسندين لك، وتسجيل الملاحظات والتواصل المباشر عبر واتساب وهاتفياً.</p>
+      </div>
+      <div class="quick-banner-meta">
+        <div class="meta-item">
+          <i class="fa-regular fa-calendar-check"></i>
+          <span id="currentDateDisplay">اليوم: --</span>
+        </div>
+        <div class="meta-item safe-badge">
+          <i class="fa-solid fa-shield-halved"></i>
+          <span>حسابك محمي وصلاحياتك مخصصة</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- بطاقات الإحصائيات الفردية للسيلز -->
+    <section class="stats-grid">
+      <div class="stat-card total-card">
+        <div class="stat-icon"><i class="fa-solid fa-users"></i></div>
+        <div class="stat-data">
+          <span class="stat-label">إجمالي العملاء المسندين لك</span>
+          <h3 class="stat-value" id="statTotalClients">0</h3>
+        </div>
+        <div class="stat-bg-watermark"><i class="fa-solid fa-users"></i></div>
+      </div>
+
+      <div class="stat-card progress-card">
+        <div class="stat-icon"><i class="fa-solid fa-phone-volume"></i></div>
+        <div class="stat-data">
+          <span class="stat-label">قيد المتابعة والتواصل</span>
+          <h3 class="stat-value" id="statInProgress">0</h3>
+        </div>
+        <div class="stat-bg-watermark"><i class="fa-solid fa-phone-volume"></i></div>
+      </div>
+
+      <div class="stat-card contracted-card">
+        <div class="stat-icon"><i class="fa-solid fa-file-signature"></i></div>
+        <div class="stat-data">
+          <span class="stat-label">صفقات تم التعاقد عليها</span>
+          <h3 class="stat-value" id="statContracted">0</h3>
+        </div>
+        <div class="stat-bg-watermark"><i class="fa-solid fa-file-signature"></i></div>
+      </div>
+
+      <div class="stat-card value-card">
+        <div class="stat-icon"><i class="fa-solid fa-coins"></i></div>
+        <div class="stat-data">
+          <span class="stat-label">قيمة صفقاتك المغلقة</span>
+          <h3 class="stat-value" id="statClosedValue">0 ج.م</h3>
+        </div>
+        <div class="stat-bg-watermark"><i class="fa-solid fa-coins"></i></div>
+      </div>
+    </section>
+
+    <!-- شريط البحث والفلترة السريعة -->
+    <section class="filter-controls-card">
+      <div class="search-input-box">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" id="searchInput" placeholder="ابحث باسم العميل، رقم الهاتف، اسم الشركة أو نوع المشروع..." oninput="filterClients()">
+        <button class="clear-search-btn" id="clearSearchBtn" onclick="clearSearch()" title="مسح البحث">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="filter-dropdowns">
+        <div class="select-group">
+          <label for="statusFilter"><i class="fa-solid fa-filter"></i> تصفية بالحالة:</label>
+          <select id="statusFilter" onchange="filterClients(true)">
+            <option value="عميل جديد" selected>عملاء جدد وإسناد (الافتراضي)</option>
+            <option value="قيد المتابعة">قيد المتابعة والتفاوض</option>
+            <option value="مؤجل">مؤجل / اتصال لاحق</option>
+            <option value="all_active">جميع الصفقات النشطة</option>
+            <option value="all">جميع العملاء المسندين</option>
+          </select>
+        </div>
+
+        <div class="select-group">
+          <label for="sortBy"><i class="fa-solid fa-arrow-down-short-wide"></i> ترتيب حسب:</label>
+          <select id="sortBy" onchange="filterClients()">
+            <option value="id_desc">الأحدث إضافة</option>
+            <option value="id_asc">الأقدم أولاً</option>
+            <option value="name_asc">الاسم (أ - ي)</option>
+            <option value="value_desc">قيمة الصفقة (الأعلى)</option>
+          </select>
+        </div>
+
+        <button class="btn-refresh" onclick="loadPortalData()" title="تحديث البيانات">
+          <i class="fa-solid fa-rotate"></i>
+          <span>تحديث</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- مسار الصفقات التفاعلي بالخطوات السريعة (One-Click Deals Pipeline) -->
+    <section class="clients-table-card">
+      <div class="table-card-header">
+        <div class="header-info">
+          <h3 id="tableCardTitle"><i class="fa-solid fa-arrows-split-up-and-left"></i> مسار الصفقات ومتابعة العملاء</h3>
+          <span class="clients-count-badge" id="clientsCountBadge">0 عميل</span>
+        </div>
+        
+        <div class="header-actions-group">
+          <div class="quick-tips">
+            <i class="fa-regular fa-lightbulb"></i>
+            <span id="viewModeHintText">انقر بنقرة واحدة على أي مرحلة لنقل الصفقة فوراً، وعند اكتمال التعاقد أو الإلغاء تُنقل تلقائياً لأرشيف الصفقات 📁</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1. تبويبات الفلترة السريعة لمسار الصفقات النشطة (Active Pipeline Tabs) -->
+      <div class="pipeline-tabs-wrapper" id="pipelineTabsWrapper">
+        <button type="button" class="pipeline-tab active" data-status="عميل جديد" onclick="selectPipelineTab('عميل جديد')">
+          <i class="fa-solid fa-user-plus"></i>
+          <span>عملاء جدد وإسناد</span>
+          <span class="tab-badge" id="tabCountNew">0</span>
+        </button>
+        <button type="button" class="pipeline-tab" data-status="قيد المتابعة" onclick="selectPipelineTab('قيد المتابعة')">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span>قيد المتابعة والتفاوض</span>
+          <span class="tab-badge" id="tabCountProgress">0</span>
+        </button>
+        <button type="button" class="pipeline-tab" data-status="مؤجل" onclick="selectPipelineTab('مؤجل')">
+          <i class="fa-solid fa-pause"></i>
+          <span>مؤجل / لاحقاً</span>
+          <span class="tab-badge" id="tabCountDelayed">0</span>
+        </button>
+        <button type="button" class="pipeline-tab" data-status="all_active" onclick="selectPipelineTab('all_active')">
+          <i class="fa-solid fa-bolt"></i>
+          <span>جميع النشطة</span>
+          <span class="tab-badge" id="tabCountAllActive">0</span>
+        </button>
+        <button type="button" class="pipeline-tab tab-archive-link" onclick="switchPortalView('archive')" title="الانتقال إلى أرشيف الصفقات المنتهية في نفس الصفحة">
+          <i class="fa-solid fa-box-archive"></i>
+          <span>أرشيف المنتهية 📁</span>
+          <span class="tab-badge" id="tabCountArchive">0</span>
+        </button>
+      </div>
+
+      <!-- 2. تبويبات أرشيف الصفقات المنتهية المدمجة (Archive Tabs - Won / Lost / All) -->
+      <div class="archive-tabs-wrapper d-none" id="archiveTabsWrapper">
+        <button type="button" class="archive-filter-tab active-won" data-category="won" onclick="selectArchiveCategory('won')">
+          <i class="fa-solid fa-trophy" style="color: #16a34a;"></i>
+          <span>تم التعاقد والنجاح 🏆</span>
+          <span class="tab-badge" id="tabCountWon" style="background: #dcfce7; color: #15803d;">0</span>
+        </button>
+        <button type="button" class="archive-filter-tab" data-category="lost" onclick="selectArchiveCategory('lost')">
+          <i class="fa-solid fa-ban" style="color: #dc2626;"></i>
+          <span>ملغي / غير مهتم 🚫</span>
+          <span class="tab-badge" id="tabCountLost" style="background: #fee2e2; color: #b91c1c;">0</span>
+        </button>
+        <button type="button" class="archive-filter-tab" data-category="all" onclick="selectArchiveCategory('all')">
+          <i class="fa-solid fa-folder-tree" style="color: #7c3aed;"></i>
+          <span>جميع الصفقات المؤرشفة 📁</span>
+          <span class="tab-badge" id="tabCountArchivedAll" style="background: #ede9fe; color: #6d28d9;">0</span>
+        </button>
+        <button type="button" class="archive-filter-tab" onclick="switchPortalView('active')" style="margin-right: auto; background: #e0f2fe; color: #0369a1; border-color: #bae6fd;" title="الرجوع إلى متابعة الصفقات النشطة">
+          <i class="fa-solid fa-arrow-right"></i>
+          <span>الرجوع للصفقات النشطة</span>
+        </button>
+      </div>
+
+      <!-- مؤشر التحميل -->
+      <div class="loading-state" id="loadingState">
+        <div class="spinner"></div>
+        <p>جاري تحميل مسار صفقاتك وإحصائياتك...</p>
+      </div>
+
+      <!-- حالة لا توجد بيانات -->
+      <div class="empty-state d-none" id="emptyState">
+        <div class="empty-icon"><i class="fa-regular fa-folder-open"></i></div>
+        <h4 id="emptyStateTitle">لا يوجد عملاء في هذه المرحلة حالياً</h4>
+        <p id="emptyStateDesc">عندما يتم إسناد أو نقل عملاء إلى هذه المرحلة، ستظهر صفقاتهم هنا فوراً.</p>
+      </div>
+
+      <!-- قائمة صفقات العملاء بنظام شريط الخطوات السريعة (Deals Stepper List) -->
+      <div class="deals-stepper-list" id="dealsContainer">
+        <!-- يتم توليد كروت الصفقات ومساراتها السريعة ديناميكياً بواسطة JavaScript -->
+      </div>
+
+      <!-- عنصر التمرير اللانهائي الذكي (Infinite Scroll - 12 عميلاً أولاً ثم 15 في كل دفعة) -->
+      <div class="infinite-scroll-container" id="portalInfiniteScrollContainer">
+        <div class="infinite-scroll-loader d-none" id="portalInfiniteScrollLoader">
+          <span class="spinner-border-sm"></span>
+          <span>جاري تحميل 15 عميلاً إضافياً...</span>
+        </div>
+        <div class="infinite-scroll-end d-none" id="portalInfiniteScrollEnd">
+          <i class="fa-solid fa-check-double text-emerald"></i>
+          <span id="portalInfiniteScrollEndText">تم استعراض كافة العملاء والصفقات المسجلة لهذه المرحلة بالكامل</span>
+        </div>
+        <div class="infinite-scroll-status" id="portalInfiniteScrollStatus"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- نافذة منبثقة: تحديث وإضافة ملاحظات العميل (Notes Modal) -->
+  <div class="modal-overlay d-none" id="notesModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <i class="fa-solid fa-notes-medical modal-icon"></i>
+          <div>
+            <h4 id="modalClientName">ملاحظات العميل</h4>
+            <small id="modalClientCompany">شركة العميل</small>
+          </div>
+        </div>
+        <button class="btn-close-modal" onclick="closeNotesModal()" title="إغلاق">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="client-quick-summary">
+          <div class="summary-pill"><i class="fa-solid fa-phone"></i> <span id="modalClientPhone">--</span></div>
+          <div class="summary-pill"><i class="fa-solid fa-building"></i> <span id="modalClientProject">--</span></div>
+        </div>
+
+        <div class="form-group">
+          <label for="clientNotesTextarea"><i class="fa-regular fa-comment-dots"></i> سجل الملاحظات والمتابعات السابقة والجديدة:</label>
+          <textarea id="clientNotesTextarea" rows="6" placeholder="اكتب تفاصيل المكالمة، متطلبات العميل، موعد المعاينة، العرض المالي المقدم، أو أي ملاحظات أخرى..."></textarea>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeNotesModal()">إلغاء</button>
+        <button class="btn-save-notes" id="saveNotesBtn" onclick="saveClientNotes()">
+          <i class="fa-solid fa-check"></i>
+          <span>حفظ الملاحظات</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- نافذة منبثقة: جدولة موعد المتابعة وتحديد التنبيه (Postpone Modal) -->
+  <div class="modal-overlay d-none" id="postponeModal">
+    <div class="modal-card postpone-modal-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <i class="fa-solid fa-clock-rotate-left modal-icon" style="color: #d97706; background: #fef3c7;"></i>
+          <div>
+            <h4 id="postponeClientName">جدولة موعد متابعة وتنبيه</h4>
+            <small id="postponeClientCompany">تأجيل الصفقة مع تفعيل منبه تلقائي</small>
+          </div>
+        </div>
+        <button class="btn-close-modal" onclick="closePostponeModal()" title="إغلاق">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="client-quick-summary">
+          <div class="summary-pill"><i class="fa-solid fa-phone"></i> <span id="postponeClientPhone">--</span></div>
+          <div class="summary-pill"><i class="fa-solid fa-building"></i> <span id="postponeClientProject">--</span></div>
+        </div>
+
+        <label class="form-label-smart"><i class="fa-solid fa-bolt" style="color: #f59e0b;"></i> اختيارات سريعة للموعد:</label>
+        <div class="postpone-shortcuts-grid">
+          <button type="button" class="shortcut-btn" data-preset="2hours" onclick="applyPostponeShortcut('2hours')">
+            <i class="fa-regular fa-clock"></i> بعد ساعتين
+          </button>
+          <button type="button" class="shortcut-btn" data-preset="tomorrow_morning" onclick="applyPostponeShortcut('tomorrow_morning')">
+            <i class="fa-regular fa-sun"></i> غداً 10:00 ص
+          </button>
+          <button type="button" class="shortcut-btn" data-preset="2days" onclick="applyPostponeShortcut('2days')">
+            <i class="fa-regular fa-calendar-plus"></i> بعد يومين
+          </button>
+          <button type="button" class="shortcut-btn" data-preset="next_week" onclick="applyPostponeShortcut('next_week')">
+            <i class="fa-regular fa-calendar-days"></i> الأسبوع القادم
+          </button>
+        </div>
+
+        <label class="form-label-smart"><i class="fa-regular fa-calendar-check"></i> حدد تاريخ ووقت المتابعة بدقة:</label>
+        <div class="form-row-dates">
+          <div style="flex: 1.3;">
+            <input type="date" id="postponeDateInput" class="form-control-smart" />
+          </div>
+          <div style="flex: 1;">
+            <input type="time" id="postponeTimeInput" class="form-control-smart" />
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 14px;">
+          <label class="form-label-smart" for="postponeReasonInput"><i class="fa-regular fa-comment-dots"></i> سبب التأجيل وملاحظات المتابعة القادمة:</label>
+          <input type="text" id="postponeReasonInput" class="form-control-smart" placeholder="مثلاً: العميل في اجتماع، طلب الاتصال غداً، مسافر حتى الأحد..." />
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closePostponeModal()">إلغاء</button>
+        <button class="btn-save-postpone" id="confirmPostponeBtn" onclick="confirmPostponeDeal()">
+          <i class="fa-solid fa-bell"></i>
+          <span>حفظ الموعد وتفعيل التنبيه 🔔</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- توست الإشعارات السريعة (Toast) -->
+  <div class="toast-notification" id="toastNotification">
+    <i class="fa-solid fa-circle-check toast-icon" id="toastIcon"></i>
+    <span id="toastMessage">تم الحفظ بنجاح</span>
+  </div>
+
+  <script src="js/global-loader.js"></script>
+  <!-- سكريبت لوحة تحكم السيلز ومسار الصفقات -->
+  <script src="js/sales-portal.js?v=15"></script>
+  <!-- شات فريق العمل والواتساب المصغر -->
+  <script src="js/chat-widget.js?v=5"></script>
+</body>
+</html>
+

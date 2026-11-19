@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>إدارة المستخدمين وحسابات السيلز | نظام إدارة العملاء CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="css/users.css?v=8">
+  <link rel="stylesheet" href="css/global-loader.css">
+  <link rel="stylesheet" href="css/chat-widget.css?v=5">
+</head>
+<body class="users-page-body">
+
+  <!-- مؤشر التحميل الموحد للمنظومة -->
+  <div class="global-crm-loader" id="globalCrmLoader">
+    <div class="global-loader-ambient"></div>
+    <div class="global-loader-content">
+      <div class="global-loader-box">
+        <div class="global-loader-ring"></div>
+        <div class="global-loader-icon">
+          <i class="fa-solid fa-users-gear"></i>
+        </div>
+      </div>
+      <div class="global-loader-brand">
+        <h3>إدارة المستخدمين <span>CRM Users</span></h3>
+        <p><i class="fa-solid fa-circle-notch fa-spin"></i> جاري تحميل حسابات الموظفين والصلاحيات...</p>
+      </div>
+      <div class="global-loader-track">
+        <div class="global-loader-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- خلفية ضوئية جمالية -->
+  <div class="ambient-glow"></div>
+
+  <!-- شريط التنقل العلوي الفاخر والمستجيب -->
+  <header class="users-topbar">
+    <div class="topbar-main-row">
+      <!-- هوية القسم والعنوان -->
+      <div class="users-brand-box">
+        <div class="brand-icon-wrap">
+          <i class="fa-solid fa-users-gear"></i>
+        </div>
+        <div class="brand-text">
+          <h1>إدارة المستخدمين وحسابات السيلز</h1>
+          <span class="brand-badge-pill">إدارة فريق المبيعات والصلاحيات</span>
+        </div>
+      </div>
+
+      <!-- روابط التنقل السريع بين أقسام المنظومة -->
+      <nav class="topbar-nav-pills">
+        <a href="/crm" class="nav-pill-link" title="اللوحة الرئيسية">
+          <i class="fa-solid fa-arrow-right"></i>
+          <span>اللوحة الرئيسية</span>
+        </a>
+        <a href="/sales" class="nav-pill-link" title="قسم المبيعات وتوزيع العملاء">
+          <i class="fa-solid fa-people-arrows"></i>
+          <span>قسم المبيعات</span>
+        </a>
+        <a href="/logs" class="nav-pill-link" title="سجل العمليات والرقابة">
+          <i class="fa-solid fa-clock-rotate-left text-amber"></i>
+          <span>سجل العمليات</span>
+        </a>
+      </nav>
+
+      <!-- مؤشر الاتصال المباشر بقاعدة البيانات وبيانات الأونر -->
+      <div class="topbar-right-controls">
+        <div class="db-live-pill" title="حالة الاتصال المباشر بقاعدة البيانات">
+          <span class="pulse-dot"></span>
+          <span>PostgreSQL 18 &bull; Database: <strong>crm</strong></span>
+        </div>
+
+        <div class="owner-badge">
+          <div class="avatar-circle"><i class="fa-solid fa-user-tie"></i></div>
+          <div class="owner-text">
+            <strong id="ownerNameDisplay">المدير العام</strong>
+            <small id="ownerEmailDisplay">1@1.com</small>
+          </div>
+        </div>
+
+        <button class="btn-logout-header" onclick="logout()" title="تسجيل الخروج">
+          <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          <span>خروج</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- الحاوية الرئيسية -->
+  <main class="dashboard-wrapper">
+
+    <!-- لافتة الترحيب والإجراءات الرئيسية -->
+    <section class="executive-welcome-banner">
+      <div class="welcome-lead">
+        <h2>مركز إدارة المستخدمين وفريق المبيعات 👥</h2>
+        <p>يمكنك من هنا إضافة موظفي سيلز جدد، تعيين كلمات المرور، ومتابعة النشاط والعملاء المسندين في PostgreSQL.</p>
+      </div>
+      <div class="executive-actions">
+        <button class="btn-primary-purple" onclick="openCreateUserModal()">
+          <i class="fa-solid fa-user-plus"></i>
+          <span>إضافة موظف سيلز جديد</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- بطاقات المؤشرات السريعة (KPIs) -->
+    <section class="kpi-grid">
+      <div class="kpi-card card-purple">
+        <div class="kpi-icon-box"><i class="fa-solid fa-users"></i></div>
+        <div class="kpi-info">
+          <span class="kpi-label">إجمالي المستخدمين</span>
+          <h3 class="kpi-num" id="kpiTotalUsers">0</h3>
+          <small class="kpi-hint">جميع الحسابات المسجلة</small>
+        </div>
+      </div>
+
+      <div class="kpi-card card-blue">
+        <div class="kpi-icon-box"><i class="fa-solid fa-headset"></i></div>
+        <div class="kpi-info">
+          <span class="kpi-label">موظفو السيلز</span>
+          <h3 class="kpi-num" id="kpiSalesCount">0</h3>
+          <small class="kpi-hint">فريق المبيعات</small>
+        </div>
+      </div>
+
+      <div class="kpi-card card-amber">
+        <div class="kpi-icon-box"><i class="fa-solid fa-crown text-amber"></i></div>
+        <div class="kpi-info">
+          <span class="kpi-label">المدير العام (الأونر)</span>
+          <h3 class="kpi-num" id="kpiOwnerCount">1</h3>
+          <small class="kpi-hint">حساب الإدارة الرئيسية</small>
+        </div>
+      </div>
+
+      <div class="kpi-card card-green">
+        <div class="kpi-icon-box"><i class="fa-solid fa-user-check"></i></div>
+        <div class="kpi-info">
+          <span class="kpi-label">إجمالي العملاء الموزعين</span>
+          <h3 class="kpi-num" id="kpiAssignedClients">0</h3>
+          <small class="kpi-hint">عملاء قيد المتابعة لدى الفريق</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- قسم جدول المستخدمين -->
+    <section class="users-management-section">
+      <div class="section-title-bar">
+        <div>
+          <h3><i class="fa-solid fa-address-book"></i> قائمة المستخدمين وطاقم المبيعات في PostgreSQL</h3>
+          <p>عرض تفاصيل كل موظف مع إمكانية تعديل بياناته، إعادة ضبط كلمة المرور، أو حذفه</p>
+        </div>
+
+        <div class="filter-controls">
+          <div class="search-box">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="userSearchInput" placeholder="بحث بالاسم أو البريد الإلكتروني..." oninput="filterUsersTable()">
+          </div>
+
+          <div class="filter-pill-group">
+            <button class="filter-btn active" data-filter="all" onclick="setUserFilter('all', this)">الكل (<span id="countAll">0</span>)</button>
+            <button class="filter-btn" data-filter="sales" onclick="setUserFilter('sales', this)">سيلز (<span id="countSales">0</span>)</button>
+            <button class="filter-btn" data-filter="owner" onclick="setUserFilter('owner', this)">الأونر (<span id="countOwner">1</span>)</button>
+          </div>
+
+          <button class="btn-refresh-sm" onclick="loadUsers()" title="تحديث البيانات">
+            <i class="fa-solid fa-arrows-rotate"></i> تحديث
+          </button>
+        </div>
+      </div>
+
+      <!-- حاوية شبكة بطاقات المستخدمين وطاقم المبيعات (متوافقة 100% مع كافة الشاشات) -->
+      <div class="users-cards-grid" id="usersCardsContainer">
+        <div class="text-center py-5" style="color:var(--text-muted); grid-column:1/-1;">
+          <i class="fa-solid fa-spinner fa-spin text-purple" style="font-size:1.8rem; margin-bottom:12px; display:block;"></i>
+          <span>جاري تحميل بيانات المستخدمين وفريق السيلز من PostgreSQL...</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- نافذة منبثقة: إنشاء حساب موظف سيلز جديد (Modal) -->
+  <div class="modal-backdrop d-none" id="createUserModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h4><i class="fa-solid fa-user-plus text-purple"></i> إضافة موظف سيلز جديد</h4>
+        <button class="btn-close" onclick="closeCreateUserModal()">&times;</button>
+      </div>
+
+      <form onsubmit="handleCreateUser(event)" class="modal-form">
+        <input type="hidden" id="newUserRole" value="سيلز (Sales)">
+
+        <div class="form-group">
+          <label>اسم المستخدم بالكامل *</label>
+          <input type="text" id="newUserName" placeholder="مثال: أحمد عبد الله" required>
+        </div>
+
+        <div class="form-group">
+          <label>البريد الإلكتروني (لتسجيل الدخول) *</label>
+          <input type="email" id="newUserEmail" placeholder="user@crm.com" required>
+        </div>
+
+        <div class="form-group">
+          <label>كلمة المرور *</label>
+          <input type="password" id="newUserPass" placeholder="أدخل كلمة المرور الخاصة بالحساب" required autocomplete="new-password">
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="closeCreateUserModal()">إلغاء</button>
+          <button type="submit" class="btn-primary-purple" id="btnSubmitCreateUser">
+            <i class="fa-solid fa-user-check"></i>
+            <span>إنشاء وتفعيل الحساب الآن</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- نافذة منبثقة: تعديل بيانات المستخدم أو إعادة تعيين كلمة المرور (Modal) -->
+  <div class="modal-backdrop d-none" id="editUserModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h4><i class="fa-solid fa-user-pen text-purple"></i> تعديل بيانات الحساب / كلمة المرور</h4>
+        <button class="btn-close" onclick="closeEditUserModal()">&times;</button>
+      </div>
+
+      <form onsubmit="handleEditUser(event)" class="modal-form">
+        <input type="hidden" id="editUserId">
+        
+        <div class="form-group" id="editRoleGroup">
+          <label>نوع الحساب (الصلاحية) *</label>
+          <select id="editUserRole">
+            <option value="سيلز (Sales)">سيلز (Sales)</option>
+            <option value="المالك (Owner)">أونر (Owner)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>الاسم بالكامل *</label>
+          <input type="text" id="editUserName" required>
+        </div>
+
+        <div class="form-group">
+          <label>البريد الإلكتروني (غير قابل للتعديل)</label>
+          <input type="email" id="editUserEmail" disabled style="background:#f1f5f9; cursor:not-allowed;">
+        </div>
+
+        <div class="form-group">
+          <label>كلمة مرور جديدة (اتركها فارغة إن لم ترغب في التغيير)</label>
+          <input type="password" id="editUserPassword" placeholder="اكتب كلمة مرور جديدة للحساب...">
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" onclick="closeEditUserModal()">إلغاء</button>
+          <button type="submit" class="btn-primary-purple" id="btnSubmitEditUser">
+            <i class="fa-solid fa-floppy-disk"></i>
+            <span>حفظ التعديلات</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- نافذة تأكيد حذف المستخدم المنبثقة في منتصف الشاشة (Confirm Delete Modal) -->
+  <div class="modal-backdrop d-none" id="deleteUserModal" onclick="handleDeleteModalBackdropClick(event)">
+    <div class="modal-card modal-card-confirm" onclick="event.stopPropagation()">
+      <div class="confirm-modal-body">
+        <div class="confirm-icon-wrapper danger-pulse">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+        <h3 class="confirm-title">تأكيد حذف الحساب نهائياً</h3>
+        <p class="confirm-desc">
+          هل أنت متأكد من رغبتك في حذف حساب <strong id="deleteTargetUserName">...</strong> من المنظومة؟
+        </p>
+        <div class="confirm-warning-box">
+          <i class="fa-solid fa-shield-halved"></i>
+          <div>
+            <strong style="display:block; margin-bottom:2px; font-weight:800;">حماية البيانات التلقائية:</strong>
+            <span>إذا كان هناك عملاء مسندين لهذا الموظف، فسيتم فك إسنادهم وإعادتهم إلى قائمة <b>(عملاء غير مسندين)</b> تلقائياً دون فقدان أي بيانات.</span>
+          </div>
+        </div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeDeleteUserModal()">
+          <i class="fa-solid fa-xmark"></i> إلغاء وتراجع
+        </button>
+        <button type="button" class="btn-danger-red" id="btnExecuteDeleteUser" onclick="executeDeleteUser()">
+          <i class="fa-solid fa-trash-can"></i> نعم، حذف الحساب الآن
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- حاوية إشعارات التوست -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="js/global-loader.js"></script>
+  <script src="js/users.js?v=8"></script>
+  <script src="js/chat-widget.js?v=5"></script>
+</body>
+</html>
+
