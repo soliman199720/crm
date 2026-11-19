@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="css/crm.css?v=2">
+  <link rel="stylesheet" href="css/crm.css?v=4">
   <link rel="stylesheet" href="css/global-loader.css">
   <link rel="stylesheet" href="css/chat-widget.css?v=5">
 </head>
@@ -51,14 +51,15 @@
     </div>
 
     <!-- مؤشر اتصال قاعدة البيانات الحي -->
-    <div class="db-live-pill">
+    <div class="db-live-pill" title="حالة الاتصال بقاعدة البيانات">
       <span class="pulse-dot"></span>
-      <span>PostgreSQL 18 &bull; Database: <strong>crm</strong></span>
+      <span class="db-text-full">PostgreSQL 18 &bull; Database: <strong>crm</strong></span>
+      <span class="db-text-compact">متصل</span>
     </div>
 
     <!-- بيانات المالك وزر الخروج -->
     <div class="owner-profile-actions">
-      <div class="owner-badge">
+      <div class="owner-badge" title="حساب المدير العام">
         <div class="avatar-circle"><i class="fa-solid fa-user-tie"></i></div>
         <div class="owner-text">
           <strong id="ownerNameDisplay">المدير العام</strong>
@@ -67,7 +68,7 @@
       </div>
       <button class="btn-logout-header" onclick="logout()" title="تسجيل الخروج">
         <i class="fa-solid fa-arrow-right-from-bracket"></i>
-        <span>خروج</span>
+        <span class="logout-text">خروج</span>
       </button>
     </div>
   </header>
