@@ -58,6 +58,10 @@
           <i class="fa-solid fa-arrow-right"></i>
           <span>اللوحة الرئيسية</span>
         </a>
+        <a href="/projects" class="nav-pill-link" title="قسم المشروعات">
+          <i class="fa-solid fa-diagram-project" style="color:#6366f1;"></i>
+          <span>المشروعات</span>
+        </a>
         <a href="/users" class="nav-pill-link" title="إدارة المستخدمين وحسابات السيلز">
           <i class="fa-solid fa-users-gear text-purple"></i>
           <span>إدارة المستخدمين</span>
@@ -184,7 +188,7 @@
         <div class="filter-controls">
           <div class="search-box">
             <i class="fa-solid fa-magnifying-glass"></i>
-            <input type="text" id="clientSearchInput" placeholder="بحث بالاسم، الشركة، أو الهاتف..." oninput="filterClientsTable()">
+            <input type="text" id="clientSearchInput" placeholder="بحث بالاسم أو برقم الهاتف..." oninput="filterClientsTable()">
           </div>
 
           <!-- قائمة الترتيب الذكي للتوزيع -->
@@ -290,19 +294,8 @@
               <input type="text" id="newClientName" placeholder="مثال: م. مصطفى الشناوي" required>
             </div>
             <div class="form-group">
-              <label>الشركة أو الجهة</label>
-              <input type="text" id="newClientCompany" placeholder="مثال: شركة النماء للاستثمار">
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
               <label>رقم الهاتف / الواتساب *</label>
               <input type="tel" id="newClientPhone" placeholder="010xxxxxxxx" required>
-            </div>
-            <div class="form-group">
-              <label>البريد الإلكتروني</label>
-              <input type="email" id="newClientEmail" placeholder="client@company.com">
             </div>
           </div>
 
@@ -372,7 +365,6 @@
                     <th>#</th>
                     <th>الاسم</th>
                     <th>الهاتف</th>
-                    <th>الشركة</th>
                     <th>نوع المشروع</th>
                     <th>الميزانية</th>
                   </tr>
@@ -405,14 +397,14 @@
           <div class="paste-instruction">
             <strong><i class="fa-solid fa-lightbulb" style="color:var(--accent)"></i> طريقة الاستخدام:</strong>
             <p>انسخ قائمة العملاء من الواتساب أو ملف نصي والصقها أدناه. كل عميل في سطر جديد مفصولاً بفاصلة (،) أو شرطة (-):</p>
-            <code>الاسم ، رقم الهاتف ، نوع المشروع ، اسم الشركة</code>
+            <code>الاسم ، رقم الهاتف ، نوع المشروع</code>
           </div>
 
           <div class="form-group">
             <textarea id="pasteClientsText" rows="6" placeholder="مثال:
-م. أحمد الشريف ، 01011112222 ، تشطيب فيلا بالتجمع ، شركة النخبة
-د. منى كمال ، 01122223333 ، تطوير أعمال وتوريدات ، المنشاوي جروب
-أ. حسام فؤاد ، 01233334444 ، إنشاء مستودع خرساني ، أفق للاستثمار" oninput="handlePasteInput()"></textarea>
+م. أحمد الشريف ، 01011112222 ، تشطيب فيلا بالتجمع
+د. منى كمال ، 01122223333 ، تطوير أعمال وتوريدات
+أ. حسام فؤاد ، 01233334444 ، إنشاء مستودع خرساني" oninput="handlePasteInput()"></textarea>
           </div>
 
           <!-- معاينة السطور المستخرجة -->
@@ -428,7 +420,6 @@
                     <th>الاسم</th>
                     <th>الهاتف</th>
                     <th>المشروع</th>
-                    <th>الشركة</th>
                   </tr>
                 </thead>
                 <tbody id="pastePreviewTbody"></tbody>
@@ -526,16 +517,6 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>الشركة أو الجهة</label>
-            <input type="text" id="editClientCompany" placeholder="مثال: شركة النور للحلول">
-          </div>
-          <div class="form-group">
-            <label>البريد الإلكتروني</label>
-            <input type="email" id="editClientEmail" placeholder="client@example.com">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
             <label>المشروع / الخدمة المطلوبة</label>
             <input type="text" id="editClientProject" placeholder="مثال: تطوير متجر إلكتروني">
           </div>
@@ -585,6 +566,99 @@
         <button type="button" class="btn-danger-red" id="btnExecuteDeleteClient" onclick="executeDeleteClient()">
           <i class="fa-solid fa-trash-can"></i> نعم، حذف العميل نهائياً
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- نافذة سجل المتابعات التفاعلي الزمني للعميل (Client Interaction Timeline Modal) للأونر -->
+  <div class="modal-backdrop d-none" id="timelineModal" onclick="if(event.target.id === 'timelineModal') closeTimelineModal()">
+    <div class="modal-card timeline-modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h4><i class="fa-solid fa-timeline text-primary"></i> سجل المتابعات الزمني التراكمي للعميل</h4>
+        <button class="btn-close" onclick="closeTimelineModal()">&times;</button>
+      </div>
+
+      <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
+        <div style="background: #f1f5f9; padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <strong id="timelineClientName" style="font-size: 1.05rem; color: #0f172a;">اسم العميل</strong>
+            <div id="timelineClientInfo" style="font-size: 0.82rem; color: #64748b; margin-top: 2px;">بيانات العميل</div>
+          </div>
+          <span class="badge" id="timelineClientStatusBadge" style="background: #2563eb; color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem;">عميل جديد</span>
+        </div>
+
+        <!-- نموذج تسجيل متابعة جديدة من قبل الأونر -->
+        <div class="timeline-quick-add-box">
+          <h5 style="margin: 0 0 10px 0; font-size: 0.95rem; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+            <i class="fa-solid fa-plus-circle text-primary"></i> تسجيل متابعة جديدة:
+          </h5>
+          
+          <div class="activity-type-selector">
+            <button type="button" class="type-pill active" data-type="call" onclick="selectActivityType('call', this)">
+              <i class="fa-solid fa-phone"></i> مكالمة
+            </button>
+            <button type="button" class="type-pill" data-type="whatsapp" onclick="selectActivityType('whatsapp', this)">
+              <i class="fa-brands fa-whatsapp"></i> واتساب
+            </button>
+            <button type="button" class="type-pill" data-type="meeting" onclick="selectActivityType('meeting', this)">
+              <i class="fa-solid fa-handshake"></i> اجتماع / زيارة
+            </button>
+            <button type="button" class="type-pill" data-type="quotation" onclick="selectActivityType('quotation', this)">
+              <i class="fa-solid fa-file-invoice-dollar"></i> عرض سعر
+            </button>
+            <button type="button" class="type-pill" data-type="note" onclick="selectActivityType('note', this)">
+              <i class="fa-solid fa-note-sticky"></i> ملاحظة
+            </button>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px;">
+              <select id="activityOutcomeSelect" class="form-control" style="font-size: 0.85rem; padding: 6px 10px; width: 100%; border: 1px solid #cbd5e1; border-radius: 8px;">
+                <option value="تم التواصل والمناقشة">تم التواصل والمناقشة بنجاح</option>
+                <option value="لم يرد / هاتف مغلق">لم يرد / مغلق / مشغول</option>
+                <option value="مهتم جداً">العميل مهتم جداً ومتحمس</option>
+                <option value="طلب مهلة للتفكير">طلب مهلة للتفكير والمراجعة</option>
+                <option value="تم تحديد موعد">تم تحديد موعد اجتماع / زيارة</option>
+                <option value="غير مهتم حالياً">غير مهتم حالياً</option>
+              </select>
+            </div>
+            <div style="flex: 1; min-width: 140px;">
+              <select id="activityStatusChangeSelect" class="form-control" style="font-size: 0.85rem; padding: 6px 10px; width: 100%; border: 1px solid #cbd5e1; border-radius: 8px;">
+                <option value="">الحفاظ على مرحلة العميل الحالية</option>
+                <option value="قيد المتابعة">نقل إلى [قيد المتابعة]</option>
+                <option value="مؤجل">نقل إلى [مؤجل]</option>
+                <option value="تم التعاقد">نقل إلى [تم التعاقد 🏆]</option>
+                <option value="ملغي">نقل إلى [ملغي / غير مهتم]</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px;">
+            <textarea id="activityDetailsText" class="form-control" rows="2" placeholder="ماذا دار في المكالمة أو التواصل؟ اكتب تفاصيل المتابعة هنا..." style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; resize: vertical; font-size: 0.9rem; font-family: inherit;"></textarea>
+          </div>
+
+          <div style="text-align: left; margin-top: 8px;">
+            <button type="button" class="btn-primary-gradient" id="btnSubmitActivity" onclick="submitClientActivity()" style="padding: 7px 18px; font-size: 0.88rem; border-radius: 8px;">
+              <i class="fa-solid fa-check"></i> حفظ المتابعة في السجل
+            </button>
+          </div>
+        </div>
+
+        <!-- قائمة الخط الزمني التراكمي -->
+        <div class="timeline-stream-wrapper" style="margin-top: 20px;">
+          <h5 style="margin: 0 0 12px 0; font-size: 0.92rem; color: #475569; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-solid fa-clock-rotate-left"></i> المتابعات السابقة:</span>
+            <span class="badge" id="timelineCountBadge" style="background: #e2e8f0; color: #334155; font-size: 0.75rem; padding: 3px 8px; border-radius: 12px;">0 متابعة</span>
+          </h5>
+
+          <div id="timelineListContainer" class="timeline-list-container">
+            <!-- يتم تعبئتها ديناميكياً بواسطة JavaScript -->
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeTimelineModal()">إغلاق النافذة</button>
       </div>
     </div>
   </div>
