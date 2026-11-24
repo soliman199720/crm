@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <base href="/">
+  <link rel="icon" href="data:,">
+  <title>مشروعات سكني | قسم المشروعات CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="/css/sales.css?v=6">
+  <link rel="stylesheet" href="/css/projects.css?v=7">
+  <link rel="stylesheet" href="/css/global-loader.css">
+  <link rel="stylesheet" href="/css/chat-widget.css?v=6">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f8fafc;
+      font-family: 'Cairo', sans-serif;
+      min-height: 100vh;
+    }
+    .projects-subpage-container {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 30px 24px;
+      min-height: calc(100vh - 120px);
+    }
+    .nav-pill-link.active {
+      background: linear-gradient(135deg, #16a34a, #15803d);
+      color: #ffffff;
+      border-color: transparent;
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+    }
+    .nav-pill-link.active i {
+      color: #ffffff !important;
+    }
+    .projects-subtabs-nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #ffffff;
+      padding: 10px 16px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 15px -3px rgba(15, 23, 42, 0.04);
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .subtab-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 20px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.94rem;
+      color: #475569;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      background: #f1f5f9;
+    }
+    .subtab-pill:hover {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+    .subtab-pill.active-residential {
+      background: linear-gradient(135deg, #16a34a, #15803d);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(22, 163, 74, 0.3);
+    }
+    .empty-content-box {
+      background: #ffffff;
+      border: 1px dashed #cbd5e1;
+      border-radius: 16px;
+      padding: 60px 20px;
+      text-align: center;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body class="sales-page-body">
+
+  <!-- مؤشر التحميل الموحد للمنظومة -->
+  <div class="global-crm-loader" id="globalCrmLoader">
+    <div class="global-loader-ambient"></div>
+    <div class="global-loader-content">
+      <div class="global-loader-box">
+        <div class="global-loader-ring"></div>
+        <div class="global-loader-icon" style="background: linear-gradient(135deg, #16a34a, #15803d);">
+          <i class="fa-solid fa-house-chimney"></i>
+        </div>
+      </div>
+      <div class="global-loader-brand">
+        <h3>مشروعات سكني <span>Residential Projects</span></h3>
+        <p><i class="fa-solid fa-circle-notch fa-spin"></i> جاري فتح صفحة سكني...</p>
+      </div>
+      <div class="global-loader-track">
+        <div class="global-loader-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- شريط التنقل العلوي -->
+  <header class="sales-topbar">
+    <div class="topbar-main-row">
+      <div class="sales-brand-box">
+        <div class="brand-icon-wrap" style="background: linear-gradient(135deg, #16a34a, #15803d); color: #fff;">
+          <i class="fa-solid fa-house-chimney"></i>
+        </div>
+        <div class="brand-text">
+          <h1>مشروعات سكني</h1>
+          <span class="brand-badge-pill" style="background: #dcfce7; color: #16a34a; border-color: #bbf7d0;">قسم المشروعات</span>
+        </div>
+      </div>
+
+      <nav class="topbar-nav-pills">
+        <a href="/crm" class="nav-pill-link" title="اللوحة الرئيسية">
+          <i class="fa-solid fa-arrow-right"></i>
+          <span>اللوحة الرئيسية</span>
+        </a>
+        <a href="/projects" class="nav-pill-link active" title="قسم المشروعات">
+          <i class="fa-solid fa-layer-group"></i>
+          <span>قسم المشروعات</span>
+        </a>
+        <a href="/sales" class="nav-pill-link" title="قسم المبيعات">
+          <i class="fa-solid fa-handshake"></i>
+          <span>قسم المبيعات</span>
+        </a>
+        <a href="/users" class="nav-pill-link" title="المستخدمين">
+          <i class="fa-solid fa-users-gear"></i>
+          <span>المستخدمين</span>
+        </a>
+        <a href="/logs" class="nav-pill-link" title="سجل العمليات">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span>سجل العمليات</span>
+        </a>
+      </nav>
+
+      <!-- مؤشر اتصال قاعدة البيانات وبيانات الأونر وزر الخروج -->
+      <div class="topbar-right-controls">
+        <div class="db-live-pill" title="حالة الاتصال المباشر بقاعدة البيانات">
+          <span class="pulse-dot"></span>
+          <span>PostgreSQL 18 &bull; Database: <strong>crm</strong></span>
+        </div>
+
+        <div class="owner-badge">
+          <div class="avatar-circle"><i class="fa-solid fa-user-tie"></i></div>
+          <div class="owner-text">
+            <strong>المدير العام</strong>
+            <small>المالك (Owner)</small>
+          </div>
+        </div>
+
+        <button class="btn-logout-header" onclick="logout()" title="تسجيل الخروج">
+          <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          <span>خروج</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- جسم الصفحة الرئيسي: فارغ تماماً حسب رغبة الإدارة -->
+  <main class="projects-subpage-container">
+    <nav class="projects-subtabs-nav">
+      <a href="/projects" class="subtab-pill">
+        <i class="fa-solid fa-layer-group"></i>
+        <span>كافة المشروعات</span>
+      </a>
+      <a href="/projects/commercial" class="subtab-pill">
+        <i class="fa-solid fa-building"></i>
+        <span>مشروعات تجاري</span>
+      </a>
+      <a href="/projects/residential" class="subtab-pill active-residential">
+        <i class="fa-solid fa-house-chimney"></i>
+        <span>مشروعات سكني</span>
+      </a>
+      <a href="/projects/lands" class="subtab-pill">
+        <i class="fa-solid fa-mountain-city"></i>
+        <span>مشروعات أراضي</span>
+      </a>
+    </nav>
+
+    <!-- محتوى الصفحة فارغ تماماً حسب الطلب -->
+  </main>
+
+  <script src="/js/global-loader.js"></script>
+  <script src="/js/chat-widget.js?v=6"></script>
+  <script src="/js/projects-manager.js?v=1"></script>
+  <script>
+    async function logout() {
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/';
+      } catch (err) {
+        window.location.href = '/';
+      }
+    }
+  </script>
+</body>
+</html>
