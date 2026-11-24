@@ -248,6 +248,19 @@ function formatFullDate(dateStr) {
   return d.toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// دالة ذكية لتنسيق رقم الواتساب ليعمل بسلاسة في مصر والأرقام الدولية
+function formatWhatsAppNumber(phone) {
+  let cleaned = (phone || '').replace(/[^0-9]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('01') && cleaned.length === 11) {
+    return '2' + cleaned;
+  }
+  if (cleaned.startsWith('00')) {
+    return cleaned.substring(2);
+  }
+  return cleaned;
+}
+
 // بناء كود HTML لكرت العميل التفاعلي (نظام موحد لكافة الأجهزة)
 function createClientCardHtml(c) {
   const isUnassigned = !c.assigned_sales_id;
@@ -260,7 +273,8 @@ function createClientCardHtml(c) {
   `).join('');
 
   const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
-  const waLink = cleanPhone ? `https://wa.me/2${cleanPhone}` : '#';
+  const waNumber = formatWhatsAppNumber(c.phone);
+  const waLink = waNumber ? `https://wa.me/${waNumber}` : '#';
 
   return `
     <div class="client-mobile-card ${isUnassigned ? 'card-unassigned' : ''} ${isChecked ? 'card-selected' : ''}" id="client-card-${c.id}">
@@ -274,7 +288,11 @@ function createClientCardHtml(c) {
                 <i class="fa-regular fa-clock"></i> ${formatRelativeTime(c.created_at)}
               </span>
             </div>
-            <span class="client-card-company"><i class="fa-regular fa-building"></i> ${escapeHtml(c.company || 'جهة خاصة')}</span>
+            ${c.created_by_name ? `
+              <div class="client-creator-badge" title="الموظف الذي قام بإدراج العميل">
+                <i class="fa-solid fa-user-plus text-primary"></i> مُضاف بواسطة: <strong>${escapeHtml(c.created_by_name)}</strong>
+              </div>
+            ` : ''}
           </div>
         </div>
         <div class="card-header-left">
@@ -328,11 +346,15 @@ function createClientCardHtml(c) {
           ${salesOptions}
         </select>
 
-        <!-- أزرار الإدارة المباشرة للكرت (تعديل وحذف) -->
+        <!-- أزرار الإدارة المباشرة للكرت (متابعات، تعديل وحذف) -->
         <div class="client-card-admin-row">
+          <button type="button" class="card-admin-btn" onclick="openClientTimeline(${c.id})" title="سجل المتابعات الزمني التراكمي للعميل" style="color: #4f46e5; border-color: #c7d2fe; background: #eef2ff;">
+            <i class="fa-solid fa-timeline"></i>
+            <span>المتابعات</span>
+          </button>
           <button type="button" class="card-admin-btn btn-edit-client" onclick="openEditClientModal(${c.id})" title="تعديل بيانات العميل">
             <i class="fa-solid fa-pen-to-square"></i>
-            <span>تعديل العميل</span>
+            <span>تعديل</span>
           </button>
           <button type="button" class="card-admin-btn btn-delete-client" onclick="openDeleteClientModal(${c.id})" title="حذف العميل نهائياً">
             <i class="fa-solid fa-trash-can"></i>
@@ -382,6 +404,11 @@ function renderClientsTable(resetLimit = true) {
   }
 
   updateInfiniteScrollUI(filtered.length);
+
+  const master = document.getElementById('selectAllCheckbox');
+  if (master) {
+    master.checked = filtered.length > 0 && filtered.every(c => selectedClientIds.has(c.id));
+  }
 }
 
 // محرك جلب الدفعة التالية (15 عميلاً) أثناء التمرير لأسفل (Infinite Scroll)
@@ -547,6 +574,12 @@ function toggleSelectClient(id, checkbox) {
     card.classList.toggle('card-selected', checkbox.checked);
   }
 
+  const filtered = getFilteredClients();
+  const master = document.getElementById('selectAllCheckbox');
+  if (master) {
+    master.checked = filtered.length > 0 && filtered.every(c => selectedClientIds.has(c.id));
+  }
+
   updateBulkBar();
 }
 
@@ -676,8 +709,6 @@ function openEditClientModal(clientId) {
   document.getElementById('editClientId').value = client.id;
   document.getElementById('editClientName').value = client.name || '';
   document.getElementById('editClientPhone').value = client.phone || '';
-  document.getElementById('editClientCompany').value = client.company || '';
-  document.getElementById('editClientEmail').value = client.email || '';
   document.getElementById('editClientProject').value = client.project_interest || '';
   document.getElementById('editClientValue').value = client.total_value || 0;
   document.getElementById('editClientNotes').value = client.notes || '';
@@ -705,8 +736,8 @@ async function handleUpdateClient(e) {
     id: parseInt(clientId, 10),
     name: document.getElementById('editClientName').value.trim(),
     phone: document.getElementById('editClientPhone').value.trim(),
-    company: document.getElementById('editClientCompany').value.trim(),
-    email: document.getElementById('editClientEmail').value.trim(),
+    company: '',
+    email: '',
     project_interest: document.getElementById('editClientProject').value.trim(),
     total_value: parseFloat(document.getElementById('editClientValue').value) || 0,
     notes: document.getElementById('editClientNotes').value.trim()
@@ -863,28 +894,22 @@ function downloadSampleExcel() {
     {
       "الاسم": "م. أحمد الشريف",
       "رقم الهاتف": "01011112222",
-      "الشركة": "شركة النخبة للاستثمار",
       "نوع المشروع": "تشطيب فيلا سكنية فاخرة",
       "الميزانية": 4500000,
-      "البريد الإلكتروني": "ahmed@elite.com",
       "ملاحظات": "مهتم بالتشطيب الداخلي والتسليم على المفتاح"
     },
     {
       "الاسم": "د. منى كمال",
       "رقم الهاتف": "01122223333",
-      "الشركة": "المنشاوي جروب",
       "نوع المشروع": "تطوير أعمال وتوريدات",
       "الميزانية": 12000000,
-      "البريد الإلكتروني": "mona@menshawy.com",
       "ملاحظات": "مشروع عاجل لتوريد وتطوير متكامل"
     },
     {
       "الاسم": "أ. حسام فؤاد",
       "رقم الهاتف": "01233334444",
-      "الشركة": "شركة أفق للتجارة",
       "نوع المشروع": "خدمات لوجستية وتوريد",
       "الميزانية": 3800000,
-      "البريد الإلكتروني": "hossam@ofoq.com",
       "ملاحظات": "مطلوب معاينة والبدء في الإجراءات"
     }
   ];
@@ -973,11 +998,10 @@ function displayExcelPreview(clients) {
       <td>${i + 1}</td>
       <td><strong>${escapeHtml(c.name || 'بدون اسم')}</strong></td>
       <td><code>${escapeHtml(c.phone || '—')}</code></td>
-      <td>${escapeHtml(c.company || '—')}</td>
       <td><small>${escapeHtml(c.project_interest || 'خدمات عامة')}</small></td>
       <td>${formatCurrency(c.total_value)} ج.م</td>
     </tr>
-  `).join('') + (clients.length > 8 ? `<tr><td colspan="6" class="text-center" style="color:var(--text-muted)">... وباقي ${clients.length - 8} عميل إضافي</td></tr>` : '');
+  `).join('') + (clients.length > 8 ? `<tr><td colspan="5" class="text-center" style="color:var(--text-muted)">... وباقي ${clients.length - 8} عميل إضافي</td></tr>` : '');
 
   container.classList.remove('d-none');
 }
@@ -1043,14 +1067,18 @@ function handlePasteInput() {
   parsedPastedClients = [];
 
   for (const line of lines) {
-    // التقسيم بالفاصلة العربية أو الإنجليزية أو الشرطة أو Tab
-    const parts = line.split(/[,،\t\-]+/).map(p => p.trim());
+    // التقسيم بالفاصلة العربية أو الإنجليزية أو Tab أو علامة الأنبوب (بدون تقسيم بالشرطة للحفاظ على أرقام الهواتف)
+    const parts = line.split(/[,،\t|]+/).map(p => p.trim());
     if (parts.length > 0) {
       const name = parts[0] || 'عميل';
-      const phone = parts[1] || '';
+      let phone = parts[1] || '';
+      // معالجة فقدان الصفر المبدئي للأرقام المصرية إن وجد
+      const digitsOnly = phone.replace(/[^0-9]/g, '');
+      if (digitsOnly.length === 10 && digitsOnly.startsWith('1')) {
+        phone = '0' + digitsOnly;
+      }
       const project_interest = parts[2] || 'مشروع وتطوير أعمال';
-      const company = parts[3] || '';
-      parsedPastedClients.push({ name, phone, project_interest, company, total_value: 0, notes: 'مستورد عبر النسخ السريع' });
+      parsedPastedClients.push({ name, phone, project_interest, company: '', total_value: 0, notes: 'مستورد عبر النسخ السريع' });
     }
   }
 
@@ -1062,9 +1090,8 @@ function handlePasteInput() {
         <td><strong>${escapeHtml(c.name)}</strong></td>
         <td><code>${escapeHtml(c.phone || '—')}</code></td>
         <td><small>${escapeHtml(c.project_interest)}</small></td>
-        <td>${escapeHtml(c.company || 'جهة خاصة')}</td>
       </tr>
-    `).join('') + (parsedPastedClients.length > 6 ? `<tr><td colspan="5" class="text-center" style="color:var(--text-muted)">... و ${parsedPastedClients.length - 6} عميل إضافي</td></tr>` : '');
+    `).join('') + (parsedPastedClients.length > 6 ? `<tr><td colspan="4" class="text-center" style="color:var(--text-muted)">... و ${parsedPastedClients.length - 6} عميل إضافي</td></tr>` : '');
 
     previewBox.classList.remove('d-none');
     btn.disabled = false;
@@ -1113,9 +1140,7 @@ async function submitPastedClients() {
 async function handleCreateClient(e) {
   e.preventDefault();
   const name = document.getElementById('newClientName').value.trim();
-  const company = document.getElementById('newClientCompany').value.trim();
   const phone = document.getElementById('newClientPhone').value.trim();
-  const email = document.getElementById('newClientEmail').value.trim();
   const project_interest = document.getElementById('newClientInterest').value.trim();
   const total_value = parseFloat(document.getElementById('newClientValue').value) || 0;
   const assignVal = document.getElementById('newClientAssignSelect').value;
@@ -1126,7 +1151,7 @@ async function handleCreateClient(e) {
     const res = await fetch('/api/clients', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, company, phone, email, project_interest, total_value, assigned_sales_id, notes })
+      body: JSON.stringify({ name, company: '', phone, email: '', project_interest, total_value, assigned_sales_id, notes })
     });
 
     const data = await res.json();
@@ -1387,6 +1412,197 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/* ========================================================
+   نظام سجل المتابعات التفاعلي الزمني للعميل (Lead Interaction Timeline) للأونر
+   ======================================================== */
+let activeTimelineClientId = null;
+let currentSelectedActivityType = 'call';
+
+function selectActivityType(type, btn) {
+  currentSelectedActivityType = type;
+  document.querySelectorAll('#timelineModal .type-pill').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+async function openClientTimeline(clientId) {
+  const client = allClients.find(c => c.id === clientId);
+  if (!client) return;
+
+  activeTimelineClientId = clientId;
+
+  const modal = document.getElementById('timelineModal');
+  const nameEl = document.getElementById('timelineClientName');
+  const infoEl = document.getElementById('timelineClientInfo');
+  const statusBadge = document.getElementById('timelineClientStatusBadge');
+  const detailsInput = document.getElementById('activityDetailsText');
+  const container = document.getElementById('timelineListContainer');
+
+  if (nameEl) nameEl.textContent = client.name || 'عميل بدون اسم';
+  if (infoEl) infoEl.textContent = `${client.phone || ''} • المسؤول: (${client.assigned_sales_name || 'غير مسند'})${client.created_by_name ? ' • مُضاف بواسطة: ' + client.created_by_name : ''}`;
+  if (statusBadge) statusBadge.textContent = client.status || 'عميل جديد';
+  if (detailsInput) detailsInput.value = '';
+
+  currentSelectedActivityType = 'call';
+  document.querySelectorAll('#timelineModal .type-pill').forEach(p => {
+    p.classList.toggle('active', p.getAttribute('data-type') === 'call');
+  });
+
+  if (container) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 25px; color: #94a3b8;">
+        <i class="fa-solid fa-spinner fa-spin" style="font-size: 1.5rem; margin-bottom: 8px;"></i>
+        <p style="margin: 0; font-size: 0.85rem;">جاري جلب سجل المتابعات الزمني...</p>
+      </div>
+    `;
+  }
+
+  if (modal) modal.classList.remove('d-none');
+
+  await loadClientActivities(clientId);
+}
+
+function closeTimelineModal() {
+  activeTimelineClientId = null;
+  const modal = document.getElementById('timelineModal');
+  if (modal) modal.classList.add('d-none');
+}
+
+async function loadClientActivities(clientId) {
+  const container = document.getElementById('timelineListContainer');
+  const countBadge = document.getElementById('timelineCountBadge');
+
+  try {
+    const res = await fetch(`/api/clients/${clientId}/activities`);
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      if (container) container.innerHTML = `<p style="color: #ef4444; text-align: center; font-size: 0.85rem;">تعذر تحميل السجل: ${data.message || ''}</p>`;
+      return;
+    }
+
+    const activities = data.activities || [];
+    if (countBadge) countBadge.textContent = `${activities.length} متابعة`;
+
+    if (activities.length === 0) {
+      if (container) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 25px 15px; color: #94a3b8;">
+            <i class="fa-solid fa-clock-rotate-left" style="font-size: 2rem; opacity: 0.4; margin-bottom: 8px;"></i>
+            <p style="margin: 0; font-size: 0.85rem;">لا توجد متابعات مسجلة لهذا العميل حتى الآن.<br>يمكنك إضافة أول متابعة من النموذج أعلاه 👆</p>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    const typeConfig = {
+      call: { icon: 'fa-phone', label: 'مكالمة هاتفية', class: 'type-badge-call' },
+      whatsapp: { icon: 'fa-whatsapp', brand: true, label: 'مراسلة واتساب', class: 'type-badge-whatsapp' },
+      meeting: { icon: 'fa-handshake', label: 'اجتماع / زيارة', class: 'type-badge-meeting' },
+      quotation: { icon: 'fa-file-invoice-dollar', label: 'عرض سعر', class: 'type-badge-quotation' },
+      note: { icon: 'fa-note-sticky', label: 'ملاحظة', class: 'type-badge-note' }
+    };
+
+    let html = '';
+    activities.forEach(act => {
+      const cfg = typeConfig[act.activity_type] || typeConfig.note;
+      const dateObj = new Date(act.created_at);
+      const timeFormatted = dateObj.toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
+
+      html += `
+        <div class="timeline-item">
+          <div class="timeline-item-dot"></div>
+          <div class="timeline-item-card">
+            <div class="timeline-item-header">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="timeline-type-badge ${cfg.class}">
+                  <i class="${cfg.brand ? 'fa-brands' : 'fa-solid'} ${cfg.icon}"></i> ${cfg.label}
+                </span>
+                ${act.outcome ? `<span class="timeline-outcome-badge">${escapeHtml(act.outcome)}</span>` : ''}
+              </div>
+              <span style="font-size: 0.75rem; color: #64748b; font-weight: 600;">${timeFormatted}</span>
+            </div>
+            <p class="timeline-item-text">${escapeHtml(act.details)}</p>
+            <div class="timeline-item-meta">
+              <span><i class="fa-solid fa-user-check"></i> تم التسجيل بواسطة: <strong>${escapeHtml(act.user_name || 'المدير العام')}</strong> (${escapeHtml(act.user_role || 'إدارة')})</span>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    if (container) container.innerHTML = html;
+
+  } catch (err) {
+    if (container) container.innerHTML = `<p style="color: #ef4444; text-align: center; font-size: 0.85rem;">خطأ في الاتصال بالخادم: ${err.message}</p>`;
+  }
+}
+
+async function submitClientActivity() {
+  if (!activeTimelineClientId) return;
+
+  const detailsInput = document.getElementById('activityDetailsText');
+  const outcomeSelect = document.getElementById('activityOutcomeSelect');
+  const statusChangeSelect = document.getElementById('activityStatusChangeSelect');
+  const btn = document.getElementById('btnSubmitActivity');
+
+  const details = detailsInput ? detailsInput.value.trim() : '';
+  const outcome = outcomeSelect ? outcomeSelect.value : '';
+  const updateStatus = statusChangeSelect ? statusChangeSelect.value : '';
+
+  if (!details) {
+    showToast('يرجى كتابة تفاصيل المتابعة أولاً', 'error');
+    if (detailsInput) detailsInput.focus();
+    return;
+  }
+
+  const origBtnText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري الحفظ...';
+  }
+
+  try {
+    const res = await fetch(`/api/clients/${activeTimelineClientId}/activities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        activity_type: currentSelectedActivityType,
+        outcome,
+        details,
+        update_client_status: updateStatus || null
+      })
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      showToast(data.message || 'تم تسجيل المتابعة بنجاح 👍', 'success');
+      if (detailsInput) detailsInput.value = '';
+
+      await loadClientActivities(activeTimelineClientId);
+
+      if (data.updatedStatus) {
+        const client = allClients.find(c => c.id === activeTimelineClientId);
+        if (client) {
+          client.status = data.updatedStatus;
+          renderClientsTable(false);
+          loadStats();
+        }
+      }
+    } else {
+      showToast(data.message || 'فشل حفظ المتابعة', 'error');
+    }
+  } catch (err) {
+    showToast('حدث خطأ في الاتصال: ' + err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origBtnText;
+    }
+  }
 }
 
 
