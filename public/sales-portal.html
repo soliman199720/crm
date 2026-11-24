@@ -125,6 +125,10 @@
         <p>هذه لوحة التحكم الخاصة بك لمتابعة صفقاتك وعملائك المسندين لك، وتسجيل الملاحظات والتواصل المباشر عبر واتساب وهاتفياً.</p>
       </div>
       <div class="quick-banner-meta">
+        <button type="button" class="btn-portal-add-client" onclick="openNewClientModal()" title="إضافة عميل جديد وإرساله للأونر">
+          <i class="fa-solid fa-user-plus"></i>
+          <span>إضافة عميل جديد</span>
+        </button>
         <div class="meta-item">
           <i class="fa-regular fa-calendar-check"></i>
           <span id="currentDateDisplay">اليوم: --</span>
@@ -414,6 +418,160 @@
           <i class="fa-solid fa-bell"></i>
           <span>حفظ الموعد وتفعيل التنبيه 🔔</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- نافذة إضافة عميل جديد للسيلز والارتباط التلقائي -->
+  <div class="modal-overlay d-none" id="newClientModal">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <i class="fa-solid fa-user-plus modal-icon" style="color: #2563eb; background: #eff6ff;"></i>
+          <div>
+            <h4>إضافة عميل جديد للمنظومة</h4>
+            <small>سيتم إسناد العميل لك تلقائياً وسيظهر للأونر مع توثيق اسمك</small>
+          </div>
+        </div>
+        <button class="btn-close-modal" onclick="closeNewClientModal()" title="إغلاق">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form id="newClientPortalForm" onsubmit="handlePortalCreateClient(event)">
+        <div class="modal-body" style="padding: 20px;">
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 10px; font-size: 0.84rem; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-circle-info" style="font-size: 1.1rem;"></i>
+            <span>سيتم إسناد العميل لحسابك فوراً للبدء في متابعته، وسيظهر للمدير العام (المالك) مع توثيق أنك صاحب الإضافة.</span>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label-smart">اسم العميل بالكامل *</label>
+            <input type="text" id="portalClientName" class="form-control-smart" placeholder="مثال: م. مصطفى الشناوي" required />
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label-smart">رقم الهاتف / الواتساب *</label>
+            <input type="tel" id="portalClientPhone" class="form-control-smart" placeholder="010xxxxxxxx" required />
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label-smart">نوع الخدمة أو المشروع المطلوب</label>
+            <input type="text" id="portalClientInterest" class="form-control-smart" placeholder="مثال: تشطيب فيلا، توريدات، تطوير أعمال..." />
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label-smart">الميزانية أو القيمة المتوقعة (ج.م)</label>
+            <input type="number" id="portalClientValue" class="form-control-smart" placeholder="0" min="0" step="500" />
+          </div>
+
+          <div class="form-group" style="margin-bottom: 8px;">
+            <label class="form-label-smart">ملاحظات العميل والتفاصيل</label>
+            <textarea id="portalClientNotes" class="form-control-smart" rows="2" placeholder="أي تفاصيل خاصة أو رغبات للعميل..."></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" onclick="closeNewClientModal()">إلغاء</button>
+          <button type="submit" class="btn-save-postpone" id="btnSubmitPortalClient" style="background: linear-gradient(135deg, #2563eb, #1d4ed8);">
+            <i class="fa-solid fa-check"></i>
+            <span>حفظ العميل والبدء في متابعته</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- نافذة سجل المتابعات التفاعلي الزمني للعميل (Client Interaction Timeline Modal) -->
+  <div class="modal-overlay d-none" id="timelineModal">
+    <div class="modal-card timeline-modal-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <i class="fa-solid fa-timeline modal-icon" style="color: #6366f1; background: #e0e7ff;"></i>
+          <div>
+            <h4 id="timelineClientName">سجل المتابعات الزمني</h4>
+            <small id="timelineClientInfo">معلومات العميل</small>
+          </div>
+        </div>
+        <button class="btn-close-modal" onclick="closeTimelineModal()" title="إغلاق">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
+        <!-- نموذج تسجيل متابعة جديدة سريعة -->
+        <div class="timeline-quick-add-box">
+          <h5 style="margin: 0 0 10px 0; font-size: 0.95rem; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+            <i class="fa-solid fa-plus-circle text-primary"></i> تسجيل متابعة جديدة:
+          </h5>
+          
+          <!-- أزرار اختيار نوع التواصل -->
+          <div class="activity-type-selector">
+            <button type="button" class="type-pill active" data-type="call" onclick="selectActivityType('call', this)">
+              <i class="fa-solid fa-phone"></i> مكالمة
+            </button>
+            <button type="button" class="type-pill" data-type="whatsapp" onclick="selectActivityType('whatsapp', this)">
+              <i class="fa-brands fa-whatsapp"></i> واتساب
+            </button>
+            <button type="button" class="type-pill" data-type="meeting" onclick="selectActivityType('meeting', this)">
+              <i class="fa-solid fa-handshake"></i> اجتماع / زيارة
+            </button>
+            <button type="button" class="type-pill" data-type="quotation" onclick="selectActivityType('quotation', this)">
+              <i class="fa-solid fa-file-invoice-dollar"></i> عرض سعر
+            </button>
+            <button type="button" class="type-pill" data-type="note" onclick="selectActivityType('note', this)">
+              <i class="fa-solid fa-note-sticky"></i> ملاحظة
+            </button>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px;">
+              <select id="activityOutcomeSelect" class="form-control-smart" style="font-size: 0.85rem; padding: 6px 10px;">
+                <option value="تم التواصل والمناقشة">تم التواصل والمناقشة بنجاح</option>
+                <option value="لم يرد / هاتف مغلق">لم يرد / مغلق / مشغول</option>
+                <option value="مهتم جداً">العميل مهتم جداً ومتحمس</option>
+                <option value="طلب مهلة للتفكير">طلب مهلة للتفكير والمراجعة</option>
+                <option value="تم تحديد موعد">تم تحديد موعد اجتماع / زيارة</option>
+                <option value="غير مهتم حالياً">غير مهتم حالياً</option>
+              </select>
+            </div>
+            <div style="flex: 1; min-width: 140px;">
+              <select id="activityStatusChangeSelect" class="form-control-smart" style="font-size: 0.85rem; padding: 6px 10px;">
+                <option value="">الحفاظ على مرحلة الصفقة الحالية</option>
+                <option value="قيد المتابعة">نقل الصفقة إلى [قيد المتابعة]</option>
+                <option value="مؤجل">نقل الصفقة إلى [مؤجل]</option>
+                <option value="تم التعاقد">نقل الصفقة إلى [تم التعاقد 🏆]</option>
+                <option value="ملغي">نقل الصفقة إلى [ملغي / غير مهتم]</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px;">
+            <textarea id="activityDetailsText" class="form-control-smart" rows="2" placeholder="ماذا دار في المكالمة أو التواصل؟ اكتب تفاصيل المتابعة هنا..." style="resize: vertical; font-size: 0.9rem;"></textarea>
+          </div>
+
+          <div style="text-align: left; margin-top: 8px;">
+            <button type="button" class="btn-primary-gradient" id="btnSubmitActivity" onclick="submitClientActivity()" style="padding: 7px 18px; font-size: 0.88rem; border-radius: 8px;">
+              <i class="fa-solid fa-check"></i> حفظ المتابعة في السجل
+            </button>
+          </div>
+        </div>
+
+        <!-- قائمة الخط الزمني التراكمي -->
+        <div class="timeline-stream-wrapper" style="margin-top: 20px;">
+          <h5 style="margin: 0 0 12px 0; font-size: 0.92rem; color: #475569; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-solid fa-clock-rotate-left"></i> المتابعات السابقة:</span>
+            <span class="badge" id="timelineCountBadge" style="background: #e2e8f0; color: #334155; font-size: 0.75rem; padding: 3px 8px; border-radius: 12px;">0 متابعة</span>
+          </h5>
+
+          <div id="timelineListContainer" class="timeline-list-container">
+            <!-- يتم تعبئتها ديناميكياً بواسطة JavaScript -->
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeTimelineModal()">إغلاق النافذة</button>
       </div>
     </div>
   </div>
