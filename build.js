@@ -75,11 +75,15 @@ try {
   if (fs.existsSync(zipFile)) {
     fs.unlinkSync(zipFile);
   }
-  // يعمل على Linux/macOS/VPS
-  execSync(`cd "${distDir}" && zip -r "${zipFile}" .`, { stdio: 'ignore' });
+  // دعم إنشاء الأرشيف عبر PowerShell على ويندوز وعبر zip على Linux/VPS
+  if (process.platform === 'win32') {
+    execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${distDir}\\*' -DestinationPath '${zipFile}' -Force"`, { stdio: 'ignore' });
+  } else {
+    execSync(`cd "${distDir}" && zip -r "${zipFile}" .`, { stdio: 'ignore' });
+  }
   console.log('   ✓ تم إنشاء ملف: dist.zip');
 } catch (err) {
-  console.warn('   ! تنبيه: zip غير متاح، ولكن مجلد dist جاهز بالكامل للرفع.');
+  console.warn('   ! تنبيه: تعذر ضغط الملف تلقائياً، ولكن مجلد dist جاهز بالكامل للرفع.');
 }
 
 console.log('\n========================================================');
