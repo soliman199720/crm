@@ -145,7 +145,8 @@ function renderUsersTable(users) {
     const createdDate = user.created_at ? new Date(user.created_at).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' }) : '--';
 
     const cleanPhone = (user.phone || '').replace(/[^0-9]/g, '');
-    const waLink = cleanPhone ? `https://wa.me/2${cleanPhone}` : '#';
+    const waNumber = formatWhatsAppNumber(user.phone);
+    const waLink = waNumber ? `https://wa.me/${waNumber}` : '#';
 
     return `
       <div class="user-profile-card ${isOwner ? 'card-owner-border' : ''}">
@@ -450,5 +451,18 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// دالة ذكية لتنسيق رقم الواتساب ليعمل بسلاسة في مصر والأرقام الدولية
+function formatWhatsAppNumber(phone) {
+  let cleaned = (phone || '').replace(/[^0-9]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('01') && cleaned.length === 11) {
+    return '2' + cleaned;
+  }
+  if (cleaned.startsWith('00')) {
+    return cleaned.substring(2);
+  }
+  return cleaned;
 }
 
