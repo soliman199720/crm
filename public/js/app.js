@@ -51,14 +51,16 @@ async function checkDatabaseStatus() {
   }
 }
 
-// إذا كان المستخدم مصادقاً عليه بالفعل، يتم توجيهه تلقائياً إلى لوحة CRM
+// إذا كان المستخدم مصادقاً عليه بالفعل، يتم توجيهه تلقائياً إلى لوحته المناسبة (أونر أو سيلز)
 async function checkCurrentSession() {
   try {
     const res = await fetch('/api/me');
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.user) {
-        window.location.href = '/crm';
+        const u = data.user;
+        const isOwner = (u.role && (u.role.includes('Owner') || u.role.includes('المالك'))) || u.email === '1@1.com';
+        window.location.href = isOwner ? '/crm' : '/sales-portal';
       }
     }
   } catch (err) {
@@ -104,6 +106,7 @@ async function handleLogin(e) {
 
   const identifier = document.getElementById('loginIdentifier').value.trim();
   const password = document.getElementById('loginPassword').value;
+  const rememberMe = document.getElementById('rememberMe') ? document.getElementById('rememberMe').checked : false;
   const submitBtn = document.getElementById('loginSubmitBtn');
   const btnText = submitBtn.querySelector('.btn-text');
 
@@ -119,7 +122,7 @@ async function handleLogin(e) {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier, password })
+      body: JSON.stringify({ identifier, password, rememberMe })
     });
 
     const data = await res.json();
@@ -184,7 +187,7 @@ function triggerDazzlingLoginAnimation(user, redirectUrl) {
     step3.classList.remove('active');
     step3.classList.add('completed');
     step3.querySelector('.step-icon').innerHTML = '<i class="fa-solid fa-check"></i>';
-    subtitle.textContent = 'جاري نقلك إلى لوحة تحكم CRM...';
+    subtitle.textContent = redirectUrl.includes('sales-portal') ? 'جاري نقلك إلى بوابة المبيعات...' : 'جاري نقلك إلى لوحة تحكم CRM...';
   }, 1100);
 
   // التحويل بعد انتهاء المشهد (1.6 ثانية)
