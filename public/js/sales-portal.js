@@ -789,10 +789,16 @@ function createArchiveDealCardHtml(client) {
           ` : ''}
         </div>
 
-        <button type="button" class="deal-notes-trigger ${hasNotes ? 'has-notes' : ''}" onclick="openNotesModal(${client.id})" title="عرض وتعديل الملاحظات">
-          <i class="fa-regular fa-comment-dots"></i>
-          <span>${notesSnippet}</span>
-        </button>
+        <div style="display: flex; gap: 8px; width: 100%; align-items: stretch;">
+          <button type="button" class="deal-notes-trigger ${hasNotes ? 'has-notes' : ''}" onclick="openNotesModal(${client.id})" title="عرض وتعديل الملاحظات" style="flex: 1;">
+            <i class="fa-regular fa-comment-dots"></i>
+            <span>${notesSnippet}</span>
+          </button>
+          <button type="button" class="deal-btn-action" onclick="openClientTimeline(${client.id})" title="سجل المتابعات التفاعلي الزمني" style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 0 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; cursor: pointer;">
+            <i class="fa-solid fa-timeline"></i>
+            <span>المتابعات</span>
+          </button>
+        </div>
       </div>
 
       <!-- زر إعادة تنشيط الصفقة (للملغي فقط) أو علامة التأكيد -->
@@ -934,10 +940,16 @@ function createActiveDealCardHtml(client) {
           ` : ''}
         </div>
 
-        <button type="button" class="deal-notes-trigger ${hasNotes ? 'has-notes' : ''}" onclick="openNotesModal(${client.id})" title="عرض وتعديل الملاحظات">
-          <i class="fa-regular fa-comment-dots"></i>
-          <span>${notesSnippet}</span>
-        </button>
+        <div style="display: flex; gap: 8px; width: 100%; align-items: stretch;">
+          <button type="button" class="deal-notes-trigger ${hasNotes ? 'has-notes' : ''}" onclick="openNotesModal(${client.id})" title="عرض وتعديل الملاحظات" style="flex: 1;">
+            <i class="fa-regular fa-comment-dots"></i>
+            <span>${notesSnippet}</span>
+          </button>
+          <button type="button" class="deal-btn-action" onclick="openClientTimeline(${client.id})" title="سجل المتابعات التفاعلي الزمني" style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 0 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; cursor: pointer;">
+            <i class="fa-solid fa-timeline"></i>
+            <span>المتابعات</span>
+          </button>
+        </div>
       </div>
 
       <!-- شريط خطوات مسار الصفقة بنقرة زر واحدة -->
@@ -1613,4 +1625,259 @@ function formatReminderDate(dateObj) {
   if (isTomorrow) return `غداً ${timeStr}`;
   return `${dateObj.toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' })} ${timeStr}`;
 }
+
+/* ========================================================
+   نظام سجل المتابعات التفاعلي الزمني للعميل (Lead Interaction Timeline)
+   ======================================================== */
+let activeTimelineClientId = null;
+let currentSelectedActivityType = 'call';
+
+function selectActivityType(type, btn) {
+  currentSelectedActivityType = type;
+  document.querySelectorAll('#timelineModal .type-pill').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+async function openClientTimeline(clientId) {
+  const client = allClients.find(c => c.id === clientId);
+  if (!client) return;
+
+  activeTimelineClientId = clientId;
+
+  const modal = document.getElementById('timelineModal');
+  const nameEl = document.getElementById('timelineClientName');
+  const infoEl = document.getElementById('timelineClientInfo');
+  const detailsInput = document.getElementById('activityDetailsText');
+  const container = document.getElementById('timelineListContainer');
+
+  if (nameEl) nameEl.textContent = client.name || 'عميل بدون اسم';
+  if (infoEl) infoEl.textContent = `${client.company ? client.company + ' • ' : ''}${client.phone || ''} • (${client.status || 'عميل جديد'})`;
+  if (detailsInput) detailsInput.value = '';
+
+  currentSelectedActivityType = 'call';
+  document.querySelectorAll('#timelineModal .type-pill').forEach(p => {
+    p.classList.toggle('active', p.getAttribute('data-type') === 'call');
+  });
+
+  if (container) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 25px; color: #94a3b8;">
+        <i class="fa-solid fa-spinner fa-spin" style="font-size: 1.5rem; margin-bottom: 8px;"></i>
+        <p style="margin: 0; font-size: 0.85rem;">جاري جلب سجل المتابعات الزمني...</p>
+      </div>
+    `;
+  }
+
+  if (modal) modal.classList.remove('d-none');
+
+  await loadClientActivities(clientId);
+}
+
+function closeTimelineModal() {
+  activeTimelineClientId = null;
+  const modal = document.getElementById('timelineModal');
+  if (modal) modal.classList.add('d-none');
+}
+
+async function loadClientActivities(clientId) {
+  const container = document.getElementById('timelineListContainer');
+  const countBadge = document.getElementById('timelineCountBadge');
+
+  try {
+    const res = await fetch(`/api/clients/${clientId}/activities`);
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      if (container) container.innerHTML = `<p style="color: #ef4444; text-align: center; font-size: 0.85rem;">تعذر تحميل السجل: ${data.message || ''}</p>`;
+      return;
+    }
+
+    const activities = data.activities || [];
+    if (countBadge) countBadge.textContent = `${activities.length} متابعة`;
+
+    if (activities.length === 0) {
+      if (container) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 25px 15px; color: #94a3b8;">
+            <i class="fa-solid fa-clock-rotate-left" style="font-size: 2rem; opacity: 0.4; margin-bottom: 8px;"></i>
+            <p style="margin: 0; font-size: 0.85rem;">لا توجد متابعات مسجلة لهذا العميل حتى الآن.<br>سجّل أول مكالمة أو تواصل من النموذج بالأعلى 👆</p>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    const typeConfig = {
+      call: { icon: 'fa-phone', label: 'مكالمة هاتفية', class: 'type-badge-call' },
+      whatsapp: { icon: 'fa-whatsapp', brand: true, label: 'مراسلة واتساب', class: 'type-badge-whatsapp' },
+      meeting: { icon: 'fa-handshake', label: 'اجتماع / زيارة', class: 'type-badge-meeting' },
+      quotation: { icon: 'fa-file-invoice-dollar', label: 'عرض سعر', class: 'type-badge-quotation' },
+      note: { icon: 'fa-note-sticky', label: 'ملاحظة', class: 'type-badge-note' }
+    };
+
+    let html = '';
+    activities.forEach(act => {
+      const cfg = typeConfig[act.activity_type] || typeConfig.note;
+      const dateObj = new Date(act.created_at);
+      const timeFormatted = dateObj.toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
+
+      html += `
+        <div class="timeline-item">
+          <div class="timeline-item-dot"></div>
+          <div class="timeline-item-card">
+            <div class="timeline-item-header">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="timeline-type-badge ${cfg.class}">
+                  <i class="${cfg.brand ? 'fa-brands' : 'fa-solid'} ${cfg.icon}"></i> ${cfg.label}
+                </span>
+                ${act.outcome ? `<span class="timeline-outcome-badge">${escapeHtml(act.outcome)}</span>` : ''}
+              </div>
+              <span style="font-size: 0.75rem; color: #64748b; font-weight: 600;">${timeFormatted}</span>
+            </div>
+            <p class="timeline-item-text">${escapeHtml(act.details)}</p>
+            <div class="timeline-item-meta">
+              <span><i class="fa-solid fa-user-check"></i> تم التسجيل بواسطة: <strong>${escapeHtml(act.user_name || 'مسؤول السيلز')}</strong></span>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    if (container) container.innerHTML = html;
+
+  } catch (err) {
+    if (container) container.innerHTML = `<p style="color: #ef4444; text-align: center; font-size: 0.85rem;">خطأ في الاتصال بالخادم: ${err.message}</p>`;
+  }
+}
+
+async function submitClientActivity() {
+  if (!activeTimelineClientId) return;
+
+  const detailsInput = document.getElementById('activityDetailsText');
+  const outcomeSelect = document.getElementById('activityOutcomeSelect');
+  const statusChangeSelect = document.getElementById('activityStatusChangeSelect');
+  const btn = document.getElementById('btnSubmitActivity');
+
+  const details = detailsInput ? detailsInput.value.trim() : '';
+  const outcome = outcomeSelect ? outcomeSelect.value : '';
+  const updateStatus = statusChangeSelect ? statusChangeSelect.value : '';
+
+  if (!details) {
+    showToast('يرجى كتابة تفاصيل المتابعة أولاً', 'error');
+    if (detailsInput) detailsInput.focus();
+    return;
+  }
+
+  const origBtnText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري الحفظ...';
+  }
+
+  try {
+    const res = await fetch(`/api/clients/${activeTimelineClientId}/activities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        activity_type: currentSelectedActivityType,
+        outcome,
+        details,
+        update_client_status: updateStatus || null
+      })
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      showToast(data.message || 'تم تسجيل المتابعة بنجاح 👍', 'success');
+      if (detailsInput) detailsInput.value = '';
+
+      await loadClientActivities(activeTimelineClientId);
+
+      if (data.updatedStatus) {
+        const client = allClients.find(c => c.id === activeTimelineClientId);
+        if (client) {
+          client.status = data.updatedStatus;
+          renderDealsPipeline();
+          loadPortalStats();
+        }
+      }
+    } else {
+      showToast(data.message || 'فشل حفظ المتابعة', 'error');
+    }
+  } catch (err) {
+    showToast('حدث خطأ في الاتصال: ' + err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origBtnText;
+    }
+  }
+}
+
+// ==================== إضافة عميل جديد من بوابة السيلز وإرساله للأونر ====================
+function openNewClientModal() {
+  const modal = document.getElementById('newClientModal');
+  if (modal) {
+    modal.classList.remove('d-none');
+    const nameInput = document.getElementById('portalClientName');
+    if (nameInput) nameInput.focus();
+  }
+}
+
+function closeNewClientModal() {
+  const modal = document.getElementById('newClientModal');
+  if (modal) modal.classList.add('d-none');
+  const form = document.getElementById('newClientPortalForm');
+  if (form) form.reset();
+}
+
+async function handlePortalCreateClient(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btnSubmitPortalClient');
+  const origHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري الإرسال...';
+  }
+
+  const name = document.getElementById('portalClientName').value.trim();
+  const phone = document.getElementById('portalClientPhone').value.trim();
+  const project_interest = document.getElementById('portalClientInterest').value.trim();
+  const total_value = parseFloat(document.getElementById('portalClientValue').value) || 0;
+  const notes = document.getElementById('portalClientNotes').value.trim();
+
+  try {
+    const res = await fetch('/api/clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        phone,
+        company: '',
+        email: '',
+        project_interest,
+        total_value,
+        notes
+      })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      closeNewClientModal();
+      showToast(data.message || 'تمت إضافة العميل وإسناده لحسابك بنجاح للبدء في متابعته!', 'success');
+      await loadPortalData();
+    } else {
+      showToast(data.message || 'فشل إرسال العميل', 'error');
+    }
+  } catch (err) {
+    showToast('حدث خطأ في الاتصال بالخادم', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+}
+
 
