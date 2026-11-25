@@ -124,7 +124,11 @@ async function loadHubStats() {
 
 // 3. تنبيه للأقسام التي سيتم ربطها
 function openModuleNotice(moduleName) {
-  alert(`قسم "${moduleName}" جاهز ومتاح للربط والتخصيص حسب طلبك في الخطوات القادمة.`);
+  const notice = document.createElement('div');
+  notice.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:14px 24px;border-radius:12px;z-index:9999;font-size:0.95rem;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+  notice.textContent = `قسم "${moduleName}" جاهز ومتاح للربط والتخصيص حسب طلبك في الخطوات القادمة.`;
+  document.body.appendChild(notice);
+  setTimeout(() => notice.remove(), 3500);
 }
 
 // 4. تسجيل الخروج

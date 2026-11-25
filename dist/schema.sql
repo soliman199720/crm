@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 6. جدول محاولات تسجيل الدخول الفاشلة (Cluster-safe Rate Limiting)
+CREATE TABLE IF NOT EXISTS login_attempts (
+  ip VARCHAR(45) PRIMARY KEY,
+  attempts INT NOT NULL DEFAULT 0,
+  first_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  blocked_until TIMESTAMP NULL
+);
+
 -- إنشاء فهارس لتحسين الأداء (Indexes for Performance)
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
@@ -119,6 +127,7 @@ CREATE TABLE IF NOT EXISTS projects (
   location_url TEXT,
   description TEXT,
   area_sqm NUMERIC(15, 2) DEFAULT 0,
+  images_json TEXT DEFAULT '[]',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category);
@@ -138,6 +147,7 @@ CREATE TABLE IF NOT EXISTS project_units (
   reserved_client_id INT REFERENCES clients(id) ON DELETE SET NULL,
   reserved_client_name VARCHAR(100),
   notes TEXT,
+  images_json TEXT DEFAULT '[]',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT unique_project_unit_code UNIQUE (project_id, unit_code)
@@ -155,9 +165,7 @@ VALUES (
   '01000000001',
   'المالك (Owner)'
 )
-ON CONFLICT (email) DO UPDATE 
-SET role = 'المالك (Owner)',
-    password = crypt('112233', gen_salt('bf', 10));
+ON CONFLICT (email) DO NOTHING;
 
 -- إضافة مستخدم سيلز تجريبي (أحمد) بكلمة مرور 112233
 INSERT INTO users (username, email, password, full_name, phone, role)

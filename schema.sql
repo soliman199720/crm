@@ -165,9 +165,7 @@ VALUES (
   '01000000001',
   'المالك (Owner)'
 )
-ON CONFLICT (email) DO UPDATE 
-SET role = 'المالك (Owner)',
-    password = crypt('112233', gen_salt('bf', 10));
+ON CONFLICT (email) DO NOTHING;
 
 -- إضافة مستخدم سيلز تجريبي (أحمد) بكلمة مرور 112233
 INSERT INTO users (username, email, password, full_name, phone, role)

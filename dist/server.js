@@ -2,7 +2,9 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { pool, initDB } = require('./db');
 require('dotenv').config();
 
@@ -10,7 +12,7 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' 
-  ? (() => { console.error('CRITICAL: JWT_SECRET environment variable is required in production!'); return 'crm_prod_fallback_' + Math.random(); })()
+  ? (() => { console.error('CRITICAL: JWT_SECRET environment variable is required in production!'); return crypto.randomBytes(64).toString('hex'); })()
   : 'crm_super_secure_vault_development_key_2026_x89');
 
 // ترويسات الأمان (Security Headers)
@@ -19,21 +21,38 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; " +
+    "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; " +
+    "img-src 'self' data: blob:; " +
+    "connect-src 'self'; " +
+    "frame-ancestors 'none';"
+  );
   next();
 });
 
 // Middlewares
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
-// دالة التحقق من رتبة المالك / المدير العام
+// دالة مساعدة للتحقق من المعرفات الرقمية الصحيحة الموجبة
+function parsePositiveInt(val) {
+  const num = parseInt(val, 10);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+const ALLOWED_CLIENT_STATUSES = ['عميل جديد', 'جديد', 'تم الإسناد', 'قيد المتابعة', 'مؤجل', 'تم التعاقد', 'ملغي'];
+
+// دالة التحقق من رتبة المالك / المدير العام (مبنية على الدور فقط من قاعدة البيانات)
 function isUserOwner(user) {
   if (!user) return false;
   const role = user.role || '';
-  const email = (user.email || '').toLowerCase();
-  const id = user.id;
-  return role.includes('Owner') || role.includes('المالك') || email === '1@1.com' || id === 1;
+  return role.includes('Owner') || role.includes('المالك');
 }
 
 // ميدلوير فرض صلاحية المالك (الأونر) فقط
@@ -48,12 +67,12 @@ function requireOwner(req, res, next) {
 }
 
 // حارس التنقل بين الصفحات وحماية صفحات الأونر من موظفي السيلز
-function pageGuard(req, res, next) {
+async function pageGuard(req, res, next) {
   const p = req.path.toLowerCase();
-  const isOwnerPage = ['/crm', '/crm.html', '/sales', '/sales.html', '/users', '/users.html', '/logs', '/logs.html'].includes(p) || p.startsWith('/projects');
-  const isSalesPortal = ['/sales-portal', '/sales-portal.html'].includes(p);
+  const isOwnerPage = ['/crm', '/crm.html', '/sales', '/sales.html', '/users', '/users.html', '/logs', '/logs.html'].includes(p);
+  const isSharedAuthPage = ['/sales-portal', '/sales-portal.html'].includes(p) || p.startsWith('/projects') || p.startsWith('/project-details');
 
-  if (!isOwnerPage && !isSalesPortal) {
+  if (!isOwnerPage && !isSharedAuthPage) {
     return next();
   }
 
@@ -64,6 +83,11 @@ function pageGuard(req, res, next) {
 
   try {
     const user = jwt.verify(token, JWT_SECRET);
+    const userCheck = await pool.query('SELECT is_active FROM users WHERE id = $1', [user.id]);
+    if (userCheck.rows.length === 0 || userCheck.rows[0].is_active === false) {
+      res.clearCookie('crm_token');
+      return res.redirect('/');
+    }
     req.user = user;
 
     if (isOwnerPage) {
@@ -74,7 +98,7 @@ function pageGuard(req, res, next) {
       return next();
     }
 
-    if (isSalesPortal) {
+    if (isSharedAuthPage) {
       return next();
     }
   } catch (err) {
@@ -176,6 +200,12 @@ app.get(['/projects/lands', '/projects-lands', '/projects-lands.html'], (req, re
   res.sendFile(path.join(__dirname, 'public', 'projects-lands.html'));
 });
 
+// توجيه مسار تفاصيل المشروع الفردي (للأونر)
+app.get(['/projects/:id', '/project-details', '/project-details.html'], (req, res, next) => {
+  if (req.params.id && !/^\d+$/.test(req.params.id)) return next();
+  res.sendFile(path.join(__dirname, 'public', 'project-details.html'));
+});
+
 // توجيه مسار /sales-portal لعرض لوحة تحكم السيلز الخاصة المستقلة
 app.get('/sales-portal', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'sales-portal.html'));
@@ -188,82 +218,86 @@ app.get(['/sales-archive', '/sales-archive.html'], (req, res) => {
 
 
 
-// فحص حالة الاتصال بقاعدة البيانات
+// فحص حالة الاتصال بقاعدة البيانات (عام - بدون تفاصيل حساسة)
 app.get('/api/db-status', async (req, res) => {
   try {
-    const result = await pool.query('SELECT current_database(), version()');
-    res.json({
-      success: true,
-      database: result.rows[0].current_database,
-      status: 'متصل'
-    });
+    await pool.query('SELECT 1');
+    res.json({ success: true, status: 'متصل' });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      status: 'غير متصل'
-    });
+    res.status(500).json({ success: false, status: 'غير متصل' });
   }
 });
 
-// دالة استخراج وتطهير عنوان الـ IP الحقيقي بأمان
+// دالة استخراج وتطهير عنوان الـ IP الحقيقي بأمان (تعتمد على req.ip المضبوط عبر trust proxy)
 function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded && typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim().slice(0, 45);
-  }
-  return (req.socket.remoteAddress || '127.0.0.1').slice(0, 45);
+  const ip = req.ip || (req.socket && req.socket.remoteAddress) || '127.0.0.1';
+  return String(ip).slice(0, 45);
 }
 
-// حماية ضد هجمات التخمين (In-Memory Rate Limiting for Login with TTL Garbage Collection)
-const loginAttempts = new Map(); // IP -> { count, firstAttemptTime, blockedUntil }
+// حماية ضد هجمات التخمين عبر قاعدة البيانات PostgreSQL (متوافقة مع Multi-Process / Cluster)
+setInterval(async () => {
+  try {
+    await pool.query(
+      "DELETE FROM login_attempts WHERE first_attempt_at < NOW() - INTERVAL '30 minutes' AND (blocked_until IS NULL OR blocked_until < NOW())"
+    );
+  } catch (e) {}
+}, 15 * 60 * 1000).unref();
 
-// تنظيف دوري للذاكرة كل 15 دقيقة لمنع تسريب الذاكرة (Memory Leak Prevention)
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, record] of loginAttempts.entries()) {
-    if (now - record.firstAttemptTime > 30 * 60 * 1000 && (!record.blockedUntil || now > record.blockedUntil)) {
-      loginAttempts.delete(ip);
-    }
-  }
-}, 15 * 60 * 1000);
-
-function loginRateLimiter(req, res, next) {
+async function loginRateLimiter(req, res, next) {
   const ip = getClientIp(req);
-  const now = Date.now();
-  const record = loginAttempts.get(ip);
-
-  if (record && record.blockedUntil && now < record.blockedUntil) {
-    const minutesLeft = Math.ceil((record.blockedUntil - now) / 60000);
-    return res.status(429).json({
-      success: false,
-      message: `تم تجاوز الحد الأقصى لمحاولات الدخول الخاطئة. تم حظر هذا الجهاز مؤقتاً، يرجى المحاولة بعد ${minutesLeft} دقيقة.`
-    });
+  try {
+    const result = await pool.query(
+      'SELECT blocked_until FROM login_attempts WHERE ip = $1',
+      [ip]
+    );
+    if (result.rows.length > 0 && result.rows[0].blocked_until) {
+      const blockedUntilMs = new Date(result.rows[0].blocked_until).getTime();
+      const now = Date.now();
+      if (now < blockedUntilMs) {
+        const minutesLeft = Math.ceil((blockedUntilMs - now) / 60000);
+        return res.status(429).json({
+          success: false,
+          message: `تم تجاوز الحد الأقصى لمحاولات الدخول الخاطئة. تم حظر هذا الجهاز مؤقتاً، يرجى المحاولة بعد ${minutesLeft} دقيقة.`
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Rate limiter check warning:', err.message);
   }
-
   next();
 }
 
-function recordFailedLogin(ip) {
-  const now = Date.now();
-  const record = loginAttempts.get(ip) || { count: 0, firstAttemptTime: now, blockedUntil: 0 };
-
-  if (now - record.firstAttemptTime > 15 * 60 * 1000) {
-    record.count = 1;
-    record.firstAttemptTime = now;
-    record.blockedUntil = 0;
-  } else {
-    record.count += 1;
+async function recordFailedLogin(ip) {
+  try {
+    await pool.query(`
+      INSERT INTO login_attempts (ip, attempts, first_attempt_at, blocked_until)
+      VALUES ($1, 1, NOW(), NULL)
+      ON CONFLICT (ip) DO UPDATE SET
+        attempts = CASE
+          WHEN login_attempts.first_attempt_at < NOW() - INTERVAL '15 minutes' THEN 1
+          ELSE login_attempts.attempts + 1
+        END,
+        first_attempt_at = CASE
+          WHEN login_attempts.first_attempt_at < NOW() - INTERVAL '15 minutes' THEN NOW()
+          ELSE login_attempts.first_attempt_at
+        END,
+        blocked_until = CASE
+          WHEN login_attempts.first_attempt_at < NOW() - INTERVAL '15 minutes' THEN NULL
+          WHEN login_attempts.attempts + 1 >= 5 THEN NOW() + INTERVAL '15 minutes'
+          ELSE login_attempts.blocked_until
+        END
+    `, [ip]);
+  } catch (err) {
+    console.warn('recordFailedLogin warning:', err.message);
   }
-
-  if (record.count >= 5) {
-    record.blockedUntil = now + 15 * 60 * 1000;
-  }
-
-  loginAttempts.set(ip, record);
 }
 
-function clearFailedLogin(ip) {
-  loginAttempts.delete(ip);
+async function clearFailedLogin(ip) {
+  try {
+    await pool.query('DELETE FROM login_attempts WHERE ip = $1', [ip]);
+  } catch (err) {
+    console.warn('clearFailedLogin warning:', err.message);
+  }
 }
 
 // مسار تسجيل الدخول الآمن مع حماية ضد التخمين وفحص تفعيل الحساب
@@ -291,7 +325,7 @@ app.post('/api/login', loginRateLimiter, async (req, res) => {
     const result = await pool.query(query, [cleanIdentifier]);
 
     if (result.rows.length === 0) {
-      recordFailedLogin(reqIp);
+      await recordFailedLogin(reqIp);
       return res.status(401).json({
         success: false,
         message: 'بيانات الدخول غير صحيحة، يرجى التأكد من البريد وكلمة المرور'
@@ -310,7 +344,7 @@ app.post('/api/login', loginRateLimiter, async (req, res) => {
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      recordFailedLogin(reqIp);
+      await recordFailedLogin(reqIp);
       return res.status(401).json({
         success: false,
         message: 'بيانات الدخول غير صحيحة، يرجى التأكد من البريد وكلمة المرور'
@@ -318,7 +352,7 @@ app.post('/api/login', loginRateLimiter, async (req, res) => {
     }
 
     // تسجيل الدخول ناجح: تصفير عداد المحاولات الفاشلة للـ IP
-    clearFailedLogin(reqIp);
+    await clearFailedLogin(reqIp);
 
     const tokenExpiry = rememberMe ? '30d' : '1d';
     const cookieMaxAge = rememberMe ? (30 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
@@ -349,7 +383,6 @@ app.post('/api/login', loginRateLimiter, async (req, res) => {
     return res.json({
       success: true,
       message: `أهلاً بك، ${user.full_name}`,
-      token,
       redirectTo,
       isOwner,
       user: {
@@ -425,7 +458,7 @@ app.get('/api/users', authMiddleware, requireOwner, async (req, res) => {
     const result = await pool.query(query);
     res.json({ success: true, users: result.rows });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب المستخدمين: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -435,15 +468,21 @@ app.post('/api/users', authMiddleware, requireOwner, async (req, res) => {
   if (!full_name || !email || !password) {
     return res.status(400).json({ success: false, message: 'يرجى إدخال اسم المستخدم، البريد الإلكتروني، وكلمة المرور' });
   }
+  if (typeof password !== 'string' || password.trim().length < 6) {
+    return res.status(400).json({ success: false, message: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+  }
 
   const cleanEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ success: false, message: 'صيغة البريد الإلكتروني غير صحيحة' });
+  }
   try {
     const existCheck = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
     if (existCheck.rows.length > 0) {
       return res.status(400).json({ success: false, message: 'البريد الإلكتروني مسجل مسبقاً في النظام' });
     }
 
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(password.trim(), salt);
     const baseUsername = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') || 'user';
     const username = `${baseUsername}_${Date.now().toString().slice(-4)}${Math.floor(100 + Math.random() * 900)}`;
@@ -474,14 +513,20 @@ app.post('/api/users', authMiddleware, requireOwner, async (req, res) => {
     res.status(201).json({ success: true, user: result.rows[0], message: `تم إنشاء حساب ${roleTitle} (${full_name}) بنجاح!` });
   } catch (err) {
     console.error('خطأ إنشاء المستخدم:', err);
-    res.status(500).json({ success: false, message: 'فشل إنشاء الحساب: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // تعديل بيانات المستخدم أو تغيير كلمة المرور
 app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
-  const userId = parseInt(req.params.id, 10);
-  const { full_name, password, role } = req.body;
+  const userId = parsePositiveInt(req.params.id);
+  if (!userId) {
+    return res.status(400).json({ success: false, message: 'معرف المستخدم غير صحيح' });
+  }
+  const { full_name, password, role, is_active } = req.body;
+  if (password && password.trim() !== '' && password.trim().length < 6) {
+    return res.status(400).json({ success: false, message: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+  }
 
   try {
     const userRes = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
@@ -490,8 +535,8 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
     }
 
     const targetUser = userRes.rows[0];
-    const isMasterAccount = (targetUser.email === '1@1.com' || targetUser.id === 1);
-    const isRequesterMaster = (req.user.email === '1@1.com' || req.user.id === 1);
+    const isMasterAccount = (targetUser.id === 1);
+    const isRequesterMaster = (req.user.id === 1);
 
     // حظر تعديل حساب الأونر الرئيسي إلا من قبل صاحب الحساب نفسه لمنع تصعيد الصلاحيات
     if (isMasterAccount && !isRequesterMaster) {
@@ -516,27 +561,32 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
       }
     }
 
+    const trimmedFullName = (typeof full_name === 'string' && full_name.trim()) ? full_name.trim() : null;
+    const newIsActive = (!isPrimaryOwner && typeof is_active === 'boolean') ? is_active : null;
+
     if (password && password.trim() !== '') {
-      const salt = await bcrypt.genSalt(10);
+      const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(password.trim(), salt);
       updateQuery = `
         UPDATE users 
         SET full_name = COALESCE($1, full_name), 
             role = COALESCE($2, role),
-            password = $3 
-        WHERE id = $4 
-        RETURNING id, username, email, full_name, role
+            is_active = COALESCE($3, is_active),
+            password = $4 
+        WHERE id = $5 
+        RETURNING id, username, email, full_name, role, is_active
       `;
-      params = [full_name || null, newRole, hashedPassword, userId];
+      params = [trimmedFullName, newRole, newIsActive, hashedPassword, userId];
     } else {
       updateQuery = `
         UPDATE users 
         SET full_name = COALESCE($1, full_name),
-            role = COALESCE($2, role)
-        WHERE id = $3 
-        RETURNING id, username, email, full_name, role
+            role = COALESCE($2, role),
+            is_active = COALESCE($3, is_active)
+        WHERE id = $4 
+        RETURNING id, username, email, full_name, role, is_active
       `;
-      params = [full_name || null, newRole, userId];
+      params = [trimmedFullName, newRole, newIsActive, userId];
     }
 
     const result = await pool.query(updateQuery, params);
@@ -555,13 +605,16 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
 
     res.json({ success: true, user: result.rows[0], message: 'تم تحديث بيانات الحساب بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في التحديث: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // حذف مستخدم (مع منع حذف الأونر وفك إسناد العملاء التابعين له)
 app.delete('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
-  const userId = parseInt(req.params.id, 10);
+  const userId = parsePositiveInt(req.params.id);
+  if (!userId) {
+    return res.status(400).json({ success: false, message: 'معرف المستخدم غير صحيح' });
+  }
 
   try {
     const userRes = await pool.query('SELECT id, email, role, full_name FROM users WHERE id = $1', [userId]);
@@ -570,7 +623,7 @@ app.delete('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
     }
 
     const targetUser = userRes.rows[0];
-    if (targetUser.email === '1@1.com' || targetUser.id === 1) {
+    if (targetUser.id === 1) {
       return res.status(403).json({ success: false, message: 'لا يمكن حذف حساب الأونر / المدير العام الرئيسي للنظام' });
     }
 
@@ -599,7 +652,7 @@ app.delete('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
 
     res.json({ success: true, message: `تم حذف حساب (${targetUser.full_name}) بنجاح وتحويل أي عملاء مسندين له إلى غير مسندين` });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ أثناء حذف المستخدم: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -618,14 +671,15 @@ app.get('/api/sales-reps', authMiddleware, requireOwner, async (req, res) => {
         COUNT(c.id) AS assigned_count
       FROM users u
       LEFT JOIN clients c ON c.assigned_sales_id = u.id
-      WHERE u.role LIKE '%سيلز%' OR u.role LIKE '%Sales%'
+      WHERE (u.role LIKE '%سيلز%' OR u.role LIKE '%Sales%')
+        AND (u.is_active IS NULL OR u.is_active = TRUE)
       GROUP BY u.id, u.full_name, u.email, u.phone, u.role
       ORDER BY u.id ASC
     `;
     const result = await pool.query(query);
     res.json({ success: true, salesReps: result.rows });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -636,10 +690,26 @@ app.post('/api/sales-reps', authMiddleware, requireOwner, async (req, res) => {
     return res.status(400).json({ success: false, message: 'يرجى إدخال الاسم والبريد الإلكتروني' });
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ success: false, message: 'صيغة البريد الإلكتروني غير صحيحة' });
+  }
+  if (password !== undefined && password !== '' && (typeof password !== 'string' || password.trim().length < 6)) {
+    return res.status(400).json({ success: false, message: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+  }
+
   try {
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password || '112233', salt);
-    const baseUsername = email.trim().toLowerCase().split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') || 'sales';
+    const existCheck = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+    if (existCheck.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'البريد الإلكتروني مسجل مسبقاً في النظام' });
+    }
+
+    const salt = await bcrypt.genSalt(12);
+    const rawPassword = (password && typeof password === 'string' && password.trim().length >= 6)
+      ? password.trim()
+      : crypto.randomBytes(12).toString('hex');
+    const hashedPassword = await bcrypt.hash(rawPassword, salt);
+    const baseUsername = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') || 'sales';
     const username = `${baseUsername}_${Date.now().toString().slice(-4)}${Math.floor(100 + Math.random() * 900)}`;
 
     const query = `
@@ -647,10 +717,20 @@ app.post('/api/sales-reps', authMiddleware, requireOwner, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, 'سيلز (Sales)')
       RETURNING id, full_name, email, phone, role
     `;
-    const result = await pool.query(query, [username, email.trim().toLowerCase(), hashedPassword, full_name.trim(), phone || '']);
+    const result = await pool.query(query, [username, cleanEmail, hashedPassword, full_name.trim(), phone || '']);
+
+    await logActivity({
+      req,
+      actionType: 'إنشاء حساب سيلز',
+      actionCategory: 'إدارة المستخدمين',
+      targetType: 'سيلز',
+      targetName: full_name.trim(),
+      details: `تم إنشاء حساب سيلز جديد باسم (${full_name.trim()}) بالبريد: ${cleanEmail}`
+    });
+
     res.status(201).json({ success: true, salesRep: result.rows[0], message: 'تمت إضافة مسؤول المبيعات بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'البريد مسجل مسبقاً أو حدث خطأ' });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -718,7 +798,7 @@ app.get('/api/clients', authMiddleware, async (req, res) => {
     const result = await pool.query(query, params);
     res.json({ success: true, clients: result.rows, isOwner });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -738,10 +818,14 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
     let createdByName = req.user ? req.user.full_name : 'المدير العام';
 
     if (isOwner) {
-      if (assigned_sales_id) {
-        const salesQuery = await pool.query('SELECT full_name FROM users WHERE id = $1', [assigned_sales_id]);
+      const parsedAssignedId = parsePositiveInt(assigned_sales_id);
+      if (parsedAssignedId) {
+        const salesQuery = await pool.query(
+          'SELECT full_name FROM users WHERE id = $1 AND (is_active IS NULL OR is_active = TRUE)',
+          [parsedAssignedId]
+        );
         if (salesQuery.rows.length > 0) {
-          salesId = assigned_sales_id;
+          salesId = parsedAssignedId;
           salesName = salesQuery.rows[0].full_name;
           clientStatus = 'قيد المتابعة';
         }
@@ -766,7 +850,7 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
       phone.trim(),
       email || '',
       project_interest || 'مشروع وتطوير أعمال',
-      parseFloat(total_value) || 0,
+      Math.max(0, parseFloat(total_value) || 0),
       salesId,
       salesName,
       createdById,
@@ -795,7 +879,7 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
       message: isOwner ? 'تمت إضافة العميل بنجاح' : 'تمت إضافة العميل وإسناده لحسابك تلقائياً بنجاح للبدء في متابعته' 
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -820,7 +904,7 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
       const company = (c.company || '').trim();
       const email = (c.email || '').trim();
       const project_interest = (c.project_interest || 'مشروع وتطوير أعمال').trim();
-      const total_value = parseFloat(c.total_value) || 0;
+      const total_value = Math.max(0, parseFloat(c.total_value) || 0);
       const notes = (c.notes || '').trim();
 
       const insertRes = await clientDb.query(
@@ -840,7 +924,9 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
     let distributedInfo = '';
     // في حال تفعيل خيار التوزيع التلقائي الفوري
     if (auto_distribute === true) {
-      const salesQuery = await clientDb.query("SELECT id, full_name FROM users WHERE role LIKE '%سيلز%' OR role LIKE '%Sales%' ORDER BY id ASC");
+      const salesQuery = await clientDb.query(
+        "SELECT id, full_name FROM users WHERE (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE) ORDER BY id ASC"
+      );
       const salesTeam = salesQuery.rows;
 
       if (salesTeam.length > 0) {
@@ -875,7 +961,7 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
   } catch (err) {
     await clientDb.query('ROLLBACK');
     console.error('خطأ الإدراج الجماعي:', err);
-    res.status(500).json({ success: false, message: 'فشل إدراج العملاء: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   } finally {
     clientDb.release();
   }
@@ -912,7 +998,7 @@ const updateClientHandler = async (req, res) => {
         phone.trim(),
         email ? email.trim() : '',
         project_interest ? project_interest.trim() : 'مشروع وتطوير أعمال',
-        parseFloat(total_value) || 0,
+        Math.max(0, parseFloat(total_value) || 0),
         notes ? notes.trim() : '',
         clientId
       ]
@@ -939,7 +1025,7 @@ const updateClientHandler = async (req, res) => {
     res.json({ success: true, client: result.rows[0], message: 'تم تحديث بيانات العميل بنجاح' });
   } catch (err) {
     console.error('خطأ تحديث العميل:', err);
-    res.status(500).json({ success: false, message: 'خطأ في قاعدة البيانات أثناء التحديث: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 };
 
@@ -984,7 +1070,7 @@ const deleteClientHandler = async (req, res) => {
     res.json({ success: true, message: `تم حذف العميل (${client.name}) بنجاح` });
   } catch (err) {
     console.error('خطأ حذف العميل:', err);
-    res.status(500).json({ success: false, message: 'فشل حذف العميل: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 };
 
@@ -997,7 +1083,10 @@ app.post('/api/clients/:id/delete', authMiddleware, requireOwner, deleteClientHa
 
 // 5. إسناد عميل محدد إلى مسؤول سيلز معين (للأونر فقط)
 app.put('/api/clients/:id/assign', authMiddleware, requireOwner, async (req, res) => {
-  const clientId = req.params.id;
+  const clientId = parseInt(req.params.id, 10);
+  if (isNaN(clientId)) {
+    return res.status(400).json({ success: false, message: 'معرف العميل غير صحيح' });
+  }
   const { sales_id } = req.body;
 
   try {
@@ -1005,9 +1094,16 @@ app.put('/api/clients/:id/assign', authMiddleware, requireOwner, async (req, res
     let newSalesId = null;
 
     if (sales_id && sales_id !== 'unassigned') {
-      const salesQuery = await pool.query('SELECT id, full_name FROM users WHERE id = $1', [sales_id]);
+      const parsedSalesId = parsePositiveInt(sales_id);
+      if (!parsedSalesId) {
+        return res.status(400).json({ success: false, message: 'معرف مسؤول المبيعات غير صحيح' });
+      }
+      const salesQuery = await pool.query(
+        'SELECT id, full_name FROM users WHERE id = $1 AND (is_active IS NULL OR is_active = TRUE)',
+        [parsedSalesId]
+      );
       if (salesQuery.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'مسؤول المبيعات غير موجود' });
+        return res.status(404).json({ success: false, message: 'مسؤول المبيعات غير موجود أو معطل' });
       }
       newSalesId = salesQuery.rows[0].id;
       salesName = salesQuery.rows[0].full_name;
@@ -1050,7 +1146,7 @@ app.put('/api/clients/:id/assign', authMiddleware, requireOwner, async (req, res
       client: result.rows[0]
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1061,7 +1157,9 @@ app.post('/api/clients/auto-distribute', authMiddleware, requireOwner, async (re
     await clientDb.query('BEGIN');
 
     // جلب فريق السيلز النشطين
-    const salesResult = await clientDb.query("SELECT id, full_name FROM users WHERE role LIKE '%سيلز%' OR role LIKE '%Sales%' ORDER BY id ASC");
+    const salesResult = await clientDb.query(
+      "SELECT id, full_name FROM users WHERE (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE) ORDER BY id ASC"
+    );
     const salesTeam = salesResult.rows;
 
     if (salesTeam.length === 0) {
@@ -1117,7 +1215,7 @@ app.post('/api/clients/auto-distribute', authMiddleware, requireOwner, async (re
     });
   } catch (err) {
     await clientDb.query('ROLLBACK');
-    res.status(500).json({ success: false, message: 'خطأ في التوزيع التلقائي: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   } finally {
     clientDb.release();
   }
@@ -1157,8 +1255,11 @@ app.post('/api/clients/custom-quota-distribute', authMiddleware, requireOwner, a
       if (!salesId || requestedCount <= 0) continue;
       if (clientIndex >= unassignedClients.length) break;
 
-      // جلب اسم موظف السيلز
-      const salesQuery = await clientDb.query("SELECT full_name FROM users WHERE id = $1", [salesId]);
+      // جلب اسم موظف السيلز النشط
+      const salesQuery = await clientDb.query(
+        "SELECT full_name FROM users WHERE id = $1 AND (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE)",
+        [salesId]
+      );
       if (salesQuery.rows.length === 0) continue;
       const salesName = salesQuery.rows[0].full_name;
 
@@ -1209,7 +1310,7 @@ app.post('/api/clients/custom-quota-distribute', authMiddleware, requireOwner, a
   } catch (err) {
     await clientDb.query('ROLLBACK');
     console.error('خطأ التوزيع المخصص:', err);
-    res.status(500).json({ success: false, message: 'خطأ أثناء تطبيق التوزيع: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   } finally {
     clientDb.release();
   }
@@ -1218,12 +1319,14 @@ app.post('/api/clients/custom-quota-distribute', authMiddleware, requireOwner, a
 // 7. إسناد جماعي لمجموعة عملاء دفعة واحدة (Bulk Assignment) (للأونر فقط)
 app.post('/api/clients/bulk-assign', authMiddleware, requireOwner, async (req, res) => {
   const { client_ids, sales_id } = req.body;
-  if (!Array.isArray(client_ids) || client_ids.length === 0 || !sales_id) {
-    return res.status(400).json({ success: false, message: 'يرجى تحديد العملاء ومسؤول السيلز' });
+  const parsedSalesId = parsePositiveInt(sales_id);
+  const validClientIds = Array.isArray(client_ids) ? client_ids.map(parsePositiveInt).filter(Boolean) : [];
+  if (validClientIds.length === 0 || !parsedSalesId) {
+    return res.status(400).json({ success: false, message: 'يرجى تحديد العملاء ومسؤول السيلز بشكل صحيح' });
   }
 
   try {
-    const salesQuery = await pool.query('SELECT full_name FROM users WHERE id = $1', [sales_id]);
+    const salesQuery = await pool.query('SELECT full_name FROM users WHERE id = $1', [parsedSalesId]);
     if (salesQuery.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'مسؤول المبيعات غير موجود' });
     }
@@ -1234,7 +1337,7 @@ app.post('/api/clients/bulk-assign', authMiddleware, requireOwner, async (req, r
        SET assigned_sales_id = $1, assigned_sales_name = $2, 
            status = CASE WHEN status = 'عميل جديد' THEN 'تم الإسناد' ELSE status END
        WHERE id = ANY($3::int[])`,
-      [sales_id, salesName, client_ids]
+      [parsedSalesId, salesName, validClientIds]
     );
 
     // تسجيل العملية في سجل الرقابة
@@ -1243,23 +1346,29 @@ app.post('/api/clients/bulk-assign', authMiddleware, requireOwner, async (req, r
       actionType: 'إسناد جماعي للعملاء',
       actionCategory: 'توزيع العملاء',
       targetType: 'عملاء',
-      targetName: `${client_ids.length} عميل`,
-      details: `تم إسناد مجموعة من ${client_ids.length} عملاء دفعة واحدة إلى مسؤول المبيعات (${salesName})`
+      targetName: `${validClientIds.length} عميل`,
+      details: `تم إسناد مجموعة من ${validClientIds.length} عملاء دفعة واحدة إلى مسؤول المبيعات (${salesName})`
     });
 
     res.json({
       success: true,
-      message: `تم إسناد ${client_ids.length} عملاء إلى ${salesName} بنجاح!`
+      message: `تم إسناد ${validClientIds.length} عملاء إلى ${salesName} بنجاح!`
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // 8. تحديث حالة العميل (للأونر أو مسؤول السيلز المسند إليه العميل)
 app.put('/api/clients/:id/status', authMiddleware, async (req, res) => {
   const { status } = req.body;
-  const clientId = req.params.id;
+  const clientId = parsePositiveInt(req.params.id);
+  if (!clientId) {
+    return res.status(400).json({ success: false, message: 'معرف العميل غير صحيح' });
+  }
+  if (!status || !ALLOWED_CLIENT_STATUSES.includes(status)) {
+    return res.status(400).json({ success: false, message: 'حالة العميل غير صالحة' });
+  }
 
   try {
     const checkClient = await pool.query('SELECT * FROM clients WHERE id = $1', [clientId]);
@@ -1312,14 +1421,20 @@ app.put('/api/clients/:id/status', authMiddleware, async (req, res) => {
 
     res.json({ success: true, client: result.rows[0], message: 'تم تحديث حالة العميل بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // 8.2 جدولة تأجيل وتحديد موعد متابعة قادمة للعميل مع تفعيل التنبيه
 app.put('/api/clients/:id/postpone', authMiddleware, async (req, res) => {
   const { postponed_until, postpone_reason } = req.body;
-  const clientId = req.params.id;
+  const clientId = parsePositiveInt(req.params.id);
+  if (!clientId) {
+    return res.status(400).json({ success: false, message: 'معرف العميل غير صحيح' });
+  }
+  if (postponed_until && isNaN(Date.parse(postponed_until))) {
+    return res.status(400).json({ success: false, message: 'تاريخ التأجيل غير صالح' });
+  }
 
   try {
     const checkClient = await pool.query('SELECT * FROM clients WHERE id = $1', [clientId]);
@@ -1356,7 +1471,7 @@ app.put('/api/clients/:id/postpone', authMiddleware, async (req, res) => {
 
     res.json({ success: true, client: result.rows[0], message: 'تمت جدولة موعد المتابعة وتفعيل التنبيه بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1391,13 +1506,16 @@ app.get('/api/sales-portal/reminders', authMiddleware, async (req, res) => {
     const dueCount = reminders.filter(r => r.is_due).length;
     res.json({ success: true, reminders, due_count: dueCount });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // 8.4 تمييز التنبيه كمكتمل أو تم التواصل ونقل الصفقة إلى قيد المتابعة
 app.put('/api/clients/:id/resolve-reminder', authMiddleware, async (req, res) => {
-  const clientId = req.params.id;
+  const clientId = parsePositiveInt(req.params.id);
+  if (!clientId) {
+    return res.status(400).json({ success: false, message: 'معرف العميل غير صحيح' });
+  }
   try {
     const checkClient = await pool.query('SELECT * FROM clients WHERE id = $1', [clientId]);
     if (checkClient.rows.length === 0) {
@@ -1429,14 +1547,17 @@ app.put('/api/clients/:id/resolve-reminder', authMiddleware, async (req, res) =>
 
     res.json({ success: true, client: result.rows[0], message: 'تم استيفاء التنبيه ونقل الصفقة إلى قيد المتابعة بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // 8.1 تحديث ملاحظات ومتابعة العميل من قبل مسؤول السيلز أو الأونر
 app.put('/api/clients/:id/notes', authMiddleware, async (req, res) => {
   const { notes } = req.body;
-  const clientId = req.params.id;
+  const clientId = parsePositiveInt(req.params.id);
+  if (!clientId) {
+    return res.status(400).json({ success: false, message: 'معرف العميل غير صحيح' });
+  }
 
   try {
     const checkClient = await pool.query('SELECT * FROM clients WHERE id = $1', [clientId]);
@@ -1462,7 +1583,7 @@ app.put('/api/clients/:id/notes', authMiddleware, async (req, res) => {
 
     res.json({ success: true, client: result.rows[0], message: 'تم حفظ الملاحظات بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1507,7 +1628,7 @@ app.get('/api/clients/:id/activities', authMiddleware, async (req, res) => {
       activities: activitiesRes.rows
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب سجل المتابعات: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1538,8 +1659,8 @@ app.post('/api/clients/:id/activities', authMiddleware, async (req, res) => {
       return res.status(403).json({ success: false, message: 'عذراً، هذا العميل غير مسند لحسابك' });
     }
 
-    const userName = req.user.full_name || req.user.fullName || (req.user.email === '1@1.com' ? 'المدير العام' : 'مسؤول السيلز');
-    const userRole = req.user.role || (req.user.email === '1@1.com' ? 'المالك (Owner)' : 'سيلز (Sales)');
+    const userName = req.user.full_name || req.user.fullName || (isUserOwner(req.user) ? 'المدير العام' : 'مسؤول السيلز');
+    const userRole = req.user.role || 'سيلز (Sales)';
 
     // إدراج المتابعة في الجدول
     const insertRes = await pool.query(`
@@ -1550,9 +1671,12 @@ app.post('/api/clients/:id/activities', authMiddleware, async (req, res) => {
 
     const newActivity = insertRes.rows[0];
 
-    // تحديث حالة العميل إذا تم تمريرها أو نقله تلقائياً لقيد المتابعة إن كان جديداً
+    // تحديث حالة العميل إذا تم تمريرها بشكل صالح أو نقله تلقائياً لقيد المتابعة إن كان جديداً
     let newStatus = client.status;
     if (update_client_status && update_client_status !== client.status) {
+      if (!ALLOWED_CLIENT_STATUSES.includes(update_client_status)) {
+        return res.status(400).json({ success: false, message: 'حالة العميل المطلوبة غير صالحة' });
+      }
       await pool.query('UPDATE clients SET status = $1 WHERE id = $2', [update_client_status, clientId]);
       newStatus = update_client_status;
     } else if (client.status === 'عميل جديد' || client.status === 'تم الإسناد') {
@@ -1584,7 +1708,7 @@ app.post('/api/clients/:id/activities', authMiddleware, async (req, res) => {
       updatedStatus: newStatus
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ أثناء تسجيل المتابعة: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1594,7 +1718,11 @@ app.get('/api/sales-portal/stats', authMiddleware, async (req, res) => {
     let userId = req.user.id;
     // تمكين الأونر من تمرير sales_id لجلب تقييم ومؤشرات أي موظف سيلز يختاره
     if (isUserOwner(req.user) && req.query.sales_id) {
-      userId = parseInt(req.query.sales_id, 10);
+      const requestedId = parsePositiveInt(req.query.sales_id);
+      if (!requestedId) {
+        return res.status(400).json({ success: false, message: 'معرف مسؤول السيلز غير صحيح' });
+      }
+      userId = requestedId;
     }
 
     const [totalRes, statusRes, valuesRes, salesUserRes] = await Promise.all([
@@ -1661,7 +1789,7 @@ app.get('/api/sales-portal/stats', authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب إحصائيات السيلز: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1697,8 +1825,11 @@ app.get('/api/audit-logs', authMiddleware, requireOwner, async (req, res) => {
     }
 
     if (user_id && user_id !== 'all') {
-      params.push(parseInt(user_id, 10));
-      query += ` AND user_id = $${params.length}`;
+      const parsedUserId = parsePositiveInt(user_id);
+      if (parsedUserId) {
+        params.push(parsedUserId);
+        query += ` AND user_id = $${params.length}`;
+      }
     }
 
     if (user_name && user_name.trim() !== '' && user_name !== 'all') {
@@ -1711,7 +1842,9 @@ app.get('/api/audit-logs', authMiddleware, requireOwner, async (req, res) => {
       query += ` AND (LOWER(details) LIKE $${params.length} OR LOWER(user_name) LIKE $${params.length} OR LOWER(target_name) LIKE $${params.length} OR LOWER(action_type) LIKE $${params.length})`;
     }
 
-    query += ` ORDER BY id DESC LIMIT ${parseInt(limit, 10) || 500}`;
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 500, 1), 1000);
+    params.push(parsedLimit);
+    query += ` ORDER BY id DESC LIMIT $${params.length}`;
 
     const result = await pool.query(query, params);
 
@@ -1734,7 +1867,7 @@ app.get('/api/audit-logs', authMiddleware, requireOwner, async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب السجل: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1753,21 +1886,25 @@ app.get('/api/projects', authMiddleware, async (req, res) => {
 
     let query = 'SELECT * FROM projects';
     const params = [];
+    const conditions = [];
 
     if (category && category !== 'all') {
       params.push(category);
-      query += ` WHERE category = $${params.length}`;
+      conditions.push(`category = $${params.length}`);
     }
 
     if (status && status !== 'all') {
       params.push(status);
-      query += params.length === 1 ? ` WHERE status = $${params.length}` : ` AND status = $${params.length}`;
+      conditions.push(`status = $${params.length}`);
     }
 
     if (search && search.trim() !== '') {
       params.push(`%${search.trim().toLowerCase()}%`);
-      const searchClause = `(LOWER(name) LIKE $${params.length} OR LOWER(location) LIKE $${params.length} OR LOWER(description) LIKE $${params.length})`;
-      query += params.length === 1 ? ` WHERE ${searchClause}` : ` AND ${searchClause}`;
+      conditions.push(`(LOWER(name) LIKE $${params.length} OR LOWER(location) LIKE $${params.length} OR LOWER(description) LIKE $${params.length} OR LOWER(project_type) LIKE $${params.length} OR LOWER(status) LIKE $${params.length})`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
 
     query += ' ORDER BY id DESC';
@@ -1808,18 +1945,115 @@ app.get('/api/projects', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     console.error('خطأ جلب المشروعات:', err);
-    res.status(500).json({ success: false, message: 'خطأ في جلب بيانات المشروعات: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
-// 9.2 إضافة مشروع جديد (للأونر فقط)
-app.post('/api/projects', authMiddleware, requireOwner, async (req, res) => {
+// 9.1.5 جلب تفاصيل مشروع واحد بالمعرف
+app.get('/api/projects/:id', authMiddleware, async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  if (isNaN(projectId)) {
+    return res.status(400).json({ success: false, message: 'معرف المشروع غير صالح' });
+  }
+  try {
+    const result = await pool.query('SELECT * FROM projects WHERE id = $1', [projectId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'المشروع غير موجود' });
+    }
+    res.json({ success: true, project: result.rows[0] });
+  } catch (err) {
+    console.error('خطأ جلب تفاصيل المشروع:', err);
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
+  }
+});
+
+const MAX_SINGLE_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB حد أقصى للصورة الواحدة
+const MAX_IMAGES_PER_REQUEST = 15; // حد أقصى لعدد الصور في الطلب الواحد
+
+// دالة عامة لحفظ الصور المرفوعة (مشروعات أو وحدات) على القرص بشكل غير متزامن
+async function saveUploadedImagesToDisk(imagesArray, folderName, filePrefix) {
+  if (!Array.isArray(imagesArray) || imagesArray.length === 0) return [];
+
+  const limitedImages = imagesArray.slice(0, MAX_IMAGES_PER_REQUEST);
+  const uploadDir = path.join(__dirname, 'public', 'uploads', folderName);
+  await fs.promises.mkdir(uploadDir, { recursive: true });
+
+  const savedUrls = [];
+  const timestamp = Date.now();
+
+  for (let idx = 0; idx < limitedImages.length; idx++) {
+    const dataUrl = limitedImages[idx];
+    if (typeof dataUrl !== 'string') continue;
+    const match = dataUrl.match(/^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/i);
+    if (!match) continue;
+
+    const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > MAX_SINGLE_IMAGE_BYTES) continue;
+
+    const filename = `${filePrefix}_${timestamp}_${idx}.${ext}`;
+    const filePath = path.join(uploadDir, filename);
+
+    await fs.promises.writeFile(filePath, buffer);
+    savedUrls.push(`/uploads/${folderName}/${filename}`);
+  }
+
+  return savedUrls;
+}
+
+// دالة عامة لحذف الصور المرتبطة من القرص بشكل غير متزامن
+async function deleteUploadedImagesFromDisk(imagesJson, expectedPrefix) {
+  let imagesToDelete = [];
+  try {
+    imagesToDelete = JSON.parse(imagesJson || '[]');
+  } catch (_) {}
+
+  if (!Array.isArray(imagesToDelete)) return;
+  for (const imgUrl of imagesToDelete) {
+    if (typeof imgUrl === 'string' && imgUrl.startsWith(expectedPrefix)) {
+      const fullPath = path.join(__dirname, 'public', imgUrl);
+      try {
+        await fs.promises.unlink(fullPath);
+      } catch (_) {}
+    }
+  }
+}
+
+// دالة عامة لدمج الصور القديمة المحتفظ بها مع الصور الجديدة وحذف المحذوفة من القرص
+async function mergeAndSaveImages(existingImages, newBase64Images, oldImagesJson, folderName, filePrefix, urlPrefix) {
+  let oldUrls = [];
+  try {
+    oldUrls = JSON.parse(oldImagesJson || '[]');
+  } catch (_) {}
+  if (!Array.isArray(oldUrls)) oldUrls = [];
+
+  const keptUrls = Array.isArray(existingImages)
+    ? existingImages.filter(u => typeof u === 'string' && oldUrls.includes(u))
+    : oldUrls;
+
+  // حذف الصور التي أزالها المستخدم من القرص
+  for (const oldUrl of oldUrls) {
+    if (!keptUrls.includes(oldUrl) && typeof oldUrl === 'string' && oldUrl.startsWith(urlPrefix)) {
+      const fullPath = path.join(__dirname, 'public', oldUrl);
+      try {
+        await fs.promises.unlink(fullPath);
+      } catch (_) {}
+    }
+  }
+
+  const newUrls = await saveUploadedImagesToDisk(newBase64Images, folderName, filePrefix);
+  return [...keptUrls, ...newUrls];
+}
+
+// 9.2 إضافة مشروع جديد (للأونر والسيلز)
+app.post('/api/projects', authMiddleware, async (req, res) => {
   let {
     category = 'commercial',
     name,
     area_sqm = 0,
     location = '',
-    description = ''
+    description = '',
+    images = []
   } = req.body;
 
   if (!name || name.trim() === '') {
@@ -1836,7 +2070,7 @@ app.post('/api/projects', authMiddleware, requireOwner, async (req, res) => {
     normalizedCategory = 'commercial';
   }
 
-  const area = parseFloat(area_sqm) || 0;
+  const area = Math.max(0, parseFloat(area_sqm) || 0);
 
   try {
     const query = `
@@ -1857,35 +2091,49 @@ app.post('/api/projects', authMiddleware, requireOwner, async (req, res) => {
       'متاح'
     ]);
 
+    let projectRow = result.rows[0];
+
+    // حفظ الصور المرفوعة إن وُجدت
+    const savedUrls = await saveUploadedImagesToDisk(images, 'projects', `proj_${projectRow.id}`);
+    if (savedUrls.length > 0) {
+      const updateRes = await pool.query(
+        'UPDATE projects SET image_url = $1, images_json = $2 WHERE id = $3 RETURNING *',
+        [savedUrls[0], JSON.stringify(savedUrls), projectRow.id]
+      );
+      projectRow = updateRes.rows[0];
+    }
+
     await logActivity({
       req,
       actionType: 'إضافة مشروع جديد',
       actionCategory: 'إدارة المشروعات',
       targetType: 'مشروع',
       targetName: name.trim(),
-      details: `تمت إضافة مشروع جديد (${name.trim()}) في تصنيف (${normalizedCategory}) بمساحة (${area} م²)`
+      details: `تمت إضافة مشروع جديد (${name.trim()}) في تصنيف (${normalizedCategory}) بمساحة (${area} م²)${savedUrls.length ? ` مع ${savedUrls.length} صور` : ''}`
     });
 
     res.status(201).json({
       success: true,
-      project: result.rows[0],
+      project: projectRow,
       message: 'تمت إضافة المشروع بنجاح'
     });
   } catch (err) {
     console.error('خطأ إضافة مشروع:', err);
-    res.status(500).json({ success: false, message: 'خطأ في حفظ المشروع: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
-// 9.3 تعديل بيانات مشروع
-app.put('/api/projects/:id', authMiddleware, requireOwner, async (req, res) => {
+// 9.3 تعديل بيانات مشروع (للأونر والسيلز)
+app.put('/api/projects/:id', authMiddleware, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   if (isNaN(projectId)) {
     return res.status(400).json({ success: false, message: 'معرف المشروع غير صحيح' });
   }
 
   const {
+    category,
     name,
+    area_sqm,
     location,
     project_type,
     meter_price,
@@ -1899,7 +2147,9 @@ app.put('/api/projects/:id', authMiddleware, requireOwner, async (req, res) => {
     image_url,
     brochure_url,
     location_url,
-    description
+    description,
+    existing_images,
+    images
   } = req.body;
 
   if (!name || name.trim() === '') {
@@ -1907,43 +2157,79 @@ app.put('/api/projects/:id', authMiddleware, requireOwner, async (req, res) => {
   }
 
   try {
+    const existingRes = await pool.query('SELECT * FROM projects WHERE id = $1', [projectId]);
+    if (existingRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'المشروع غير موجود' });
+    }
+    const current = existingRes.rows[0];
+
+    let normalizedCategory = (category || current.category || 'commercial').trim().toLowerCase();
+    if (normalizedCategory === 'تجاري') normalizedCategory = 'commercial';
+    else if (normalizedCategory === 'سكني') normalizedCategory = 'residential';
+    else if (normalizedCategory === 'أراضي' || normalizedCategory === 'اراضي') normalizedCategory = 'lands';
+    if (!['commercial', 'residential', 'lands'].includes(normalizedCategory)) {
+      normalizedCategory = current.category || 'commercial';
+    }
+
+    let finalImagesJson = current.images_json || '[]';
+    const isSafeImageUrl = (u) => typeof u === 'string' && (u === '' || u.startsWith('/uploads/') || /^https?:\/\//i.test(u));
+    let finalImageUrl = (image_url !== undefined && isSafeImageUrl(image_url)) ? image_url : (current.image_url || '');
+    if (existing_images !== undefined || (Array.isArray(images) && images.length > 0)) {
+      const mergedUrls = await mergeAndSaveImages(
+        existing_images,
+        images,
+        current.images_json,
+        'projects',
+        `proj_${projectId}`,
+        '/uploads/projects/'
+      );
+      finalImagesJson = JSON.stringify(mergedUrls);
+      finalImageUrl = mergedUrls[0] || '';
+    }
+
     const query = `
       UPDATE projects
       SET 
-        name = $1,
-        location = $2,
-        project_type = $3,
-        meter_price = $4,
-        starting_price = $5,
-        down_payment_pct = $6,
-        installment_years = $7,
-        delivery_date = $8,
-        units_available = $9,
-        units_total = $10,
-        status = $11,
-        image_url = $12,
-        brochure_url = $13,
-        location_url = $14,
-        description = $15
-      WHERE id = $16
+        category = $1,
+        name = $2,
+        area_sqm = $3,
+        location = $4,
+        project_type = $5,
+        meter_price = $6,
+        starting_price = $7,
+        down_payment_pct = $8,
+        installment_years = $9,
+        delivery_date = $10,
+        units_available = $11,
+        units_total = $12,
+        status = $13,
+        image_url = $14,
+        images_json = $15,
+        brochure_url = $16,
+        location_url = $17,
+        description = $18
+      WHERE id = $19
       RETURNING *
     `;
     const result = await pool.query(query, [
+      normalizedCategory,
       name.trim(),
-      location ? location.trim() : '',
-      project_type ? project_type.trim() : 'تجاري',
-      parseFloat(meter_price) || 0,
-      parseFloat(starting_price) || 0,
-      parseFloat(down_payment_pct) || 10,
-      parseInt(installment_years, 10) || 5,
-      delivery_date ? delivery_date.trim() : 'استلام 2026',
-      parseInt(units_available, 10) || 0,
-      parseInt(units_total, 10) || 0,
-      status,
-      image_url || '',
-      brochure_url || '',
-      location_url || '',
-      description ? description.trim() : '',
+      area_sqm !== undefined ? Math.max(0, parseFloat(area_sqm) || 0) : current.area_sqm,
+      location !== undefined ? location.trim() : (current.location || ''),
+      project_type ? project_type.trim() : (current.project_type || 'تجاري'),
+      meter_price !== undefined ? Math.max(0, parseFloat(meter_price) || 0) : current.meter_price,
+      starting_price !== undefined ? Math.max(0, parseFloat(starting_price) || 0) : current.starting_price,
+      down_payment_pct !== undefined ? (parseFloat(down_payment_pct) || 10) : current.down_payment_pct,
+      installment_years !== undefined ? (parseInt(installment_years, 10) || 5) : current.installment_years,
+      delivery_date !== undefined ? delivery_date.trim() : current.delivery_date,
+      units_available !== undefined ? (parseInt(units_available, 10) || 0) : current.units_available,
+      units_total !== undefined ? (parseInt(units_total, 10) || 0) : current.units_total,
+      status !== undefined ? status : current.status,
+      finalImageUrl,
+      finalImagesJson,
+      brochure_url !== undefined ? brochure_url : (current.brochure_url || ''),
+      location_url !== undefined ? location_url : (current.location_url || ''),
+      description !== undefined ? description.trim() : (current.description || ''),
       projectId
     ]);
 
@@ -1966,7 +2252,7 @@ app.put('/api/projects/:id', authMiddleware, requireOwner, async (req, res) => {
       message: 'تم تحديث بيانات المشروع بنجاح'
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في تعديل المشروع: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -1978,13 +2264,17 @@ app.delete('/api/projects/:id', authMiddleware, requireOwner, async (req, res) =
   }
 
   try {
-    const check = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    const check = await pool.query('SELECT name, images_json FROM projects WHERE id = $1', [projectId]);
     if (check.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'المشروع غير موجود' });
     }
     const projectName = check.rows[0].name;
+    const projImagesJson = check.rows[0].images_json;
 
     await pool.query('DELETE FROM projects WHERE id = $1', [projectId]);
+
+    // حذف ملفات الصور المرتبطة بالمشروع من القرص
+    await deleteUploadedImagesFromDisk(projImagesJson, '/uploads/projects/');
 
     await logActivity({
       req,
@@ -1997,7 +2287,7 @@ app.delete('/api/projects/:id', authMiddleware, requireOwner, async (req, res) =
 
     res.json({ success: true, message: 'تم حذف المشروع بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في حذف المشروع: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2016,28 +2306,41 @@ app.get('/api/projects/:id/interested-clients', authMiddleware, async (req, res)
     const project = projectRes.rows[0];
 
     const locationPart = (project.location || '').split('-')[0].trim();
+    const categoryKeywordsMap = {
+      commercial: ['تجاري', 'إداري', 'مول', 'مكتب'],
+      residential: ['سكني', 'شقة', 'فيلا', 'كمبوند'],
+      lands: ['أرض', 'أراضي', 'قطعة']
+    };
+    const catKeywords = categoryKeywordsMap[project.category] || ['تجاري', 'سكني', 'أراضي'];
+    const params = [`%${project.name}%`, `%${locationPart}%`];
+    const catConditions = catKeywords.map(kw => {
+      params.push(`%${kw}%`);
+      return `LOWER(c.project_interest) LIKE LOWER($${params.length})`;
+    }).join(' OR ');
+
+    let salesFilterSql = '';
+    if (!isUserOwner(req.user)) {
+      params.push(req.user.id);
+      salesFilterSql = `AND c.assigned_sales_id = $${params.length}`;
+    }
 
     const query = `
       SELECT 
         c.id, c.name, c.phone, c.project_interest, c.total_value, c.status,
         c.assigned_sales_name, c.created_at, c.notes
       FROM clients c
-      WHERE 
+      WHERE (
         LOWER(c.project_interest) LIKE LOWER($1)
         OR LOWER(c.notes) LIKE LOWER($1)
         OR (length($2) > 3 AND (LOWER(c.project_interest) LIKE LOWER($2) OR LOWER(c.notes) LIKE LOWER($2)))
-        OR LOWER(c.project_interest) LIKE '%تجاري%'
-        OR LOWER(c.project_interest) LIKE '%إداري%'
-        OR LOWER(c.project_interest) LIKE '%مول%'
-        OR LOWER(c.project_interest) LIKE '%مكتب%'
+        OR ${catConditions}
+      )
+      ${salesFilterSql}
       ORDER BY c.id DESC
       LIMIT 50
     `;
 
-    const clientsRes = await pool.query(query, [
-      `%${project.name}%`,
-      `%${locationPart}%`
-    ]);
+    const clientsRes = await pool.query(query, params);
 
     res.json({
       success: true,
@@ -2045,7 +2348,7 @@ app.get('/api/projects/:id/interested-clients', authMiddleware, async (req, res)
       clients: clientsRes.rows
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب العملاء المهتمين: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2133,12 +2436,12 @@ app.get('/api/projects/:id/units', authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب وحدات المشروع: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
-// 9.6.2 إضافة وحدة جديدة للمشروع (للأونر فقط)
-app.post('/api/projects/:id/units', authMiddleware, requireOwner, async (req, res) => {
+// 9.6.2 إضافة وحدة جديدة للمشروع (للأونر والسيلز)
+app.post('/api/projects/:id/units', authMiddleware, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   if (isNaN(projectId)) {
     return res.status(400).json({ success: false, message: 'معرف المشروع غير صحيح' });
@@ -2153,7 +2456,8 @@ app.post('/api/projects/:id/units', authMiddleware, requireOwner, async (req, re
     total_price = 0,
     status = 'متاح',
     reserved_client_name = null,
-    notes = ''
+    notes = '',
+    images = []
   } = req.body;
 
   if (!unit_code || !unit_code.trim()) {
@@ -2173,9 +2477,9 @@ app.post('/api/projects/:id/units', authMiddleware, requireOwner, async (req, re
       return res.status(400).json({ success: false, message: `كود الوحدة (${unit_code}) موجود بالفعل في هذا المشروع` });
     }
 
-    const area = parseFloat(area_sqm) || 0;
-    const mPrice = parseFloat(meter_price) || 0;
-    const calcTotalPrice = parseFloat(total_price) || (area * mPrice) || 0;
+    const area = Math.max(0, parseFloat(area_sqm) || 0);
+    const mPrice = Math.max(0, parseFloat(meter_price) || 0);
+    const calcTotalPrice = Math.max(0, parseFloat(total_price) || (area * mPrice) || 0);
 
     const insertRes = await pool.query(`
       INSERT INTO project_units (
@@ -2196,6 +2500,16 @@ app.post('/api/projects/:id/units', authMiddleware, requireOwner, async (req, re
       notes
     ]);
 
+    let unitRow = insertRes.rows[0];
+    const savedUnitUrls = await saveUploadedImagesToDisk(images, 'units', `unit_${projectId}_${unitRow.id}`);
+    if (savedUnitUrls.length > 0) {
+      const updRes = await pool.query(
+        'UPDATE project_units SET images_json = $1 WHERE id = $2 RETURNING *',
+        [JSON.stringify(savedUnitUrls), unitRow.id]
+      );
+      unitRow = updRes.rows[0];
+    }
+
     await syncProjectUnitsCounters(projectId);
 
     await logActivity({
@@ -2204,21 +2518,21 @@ app.post('/api/projects/:id/units', authMiddleware, requireOwner, async (req, re
       actionCategory: 'إدارة المشروعات',
       targetType: 'وحدة مشروع',
       targetName: `${unit_code} - ${projectName}`,
-      details: `تمت إضافة الوحدة (${unit_code}) في مشروع (${projectName}) بمساحة ${area}م² وسعر ${calcTotalPrice}`
+      details: `تمت إضافة الوحدة (${unit_code}) في مشروع (${projectName}) بمساحة ${area}م² وسعر ${calcTotalPrice}${savedUnitUrls.length ? ` مع ${savedUnitUrls.length} صور` : ''}`
     });
 
     res.json({
       success: true,
       message: 'تمت إضافة الوحدة بنجاح',
-      unit: insertRes.rows[0]
+      unit: unitRow
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في إضافة الوحدة: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
-// 9.6.3 تعديل بيانات وحدة (للأونر فقط)
-app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (req, res) => {
+// 9.6.3 تعديل بيانات وحدة (للأونر والسيلز)
+app.put('/api/projects/:id/units/:unitId', authMiddleware, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   const unitId = parseInt(req.params.unitId, 10);
   if (isNaN(projectId) || isNaN(unitId)) {
@@ -2234,7 +2548,9 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (
     total_price,
     status,
     reserved_client_name,
-    notes
+    notes,
+    existing_images,
+    images
   } = req.body;
 
   try {
@@ -2251,9 +2567,27 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (
       }
     }
 
-    const area = area_sqm !== undefined ? parseFloat(area_sqm) : current.area_sqm;
-    const mPrice = meter_price !== undefined ? parseFloat(meter_price) : current.meter_price;
-    const finalTotal = total_price !== undefined ? parseFloat(total_price) : (area * mPrice || current.total_price);
+    const parsedArea = area_sqm !== undefined ? parseFloat(area_sqm) : NaN;
+    const area = Number.isFinite(parsedArea) ? Math.max(0, parsedArea) : (parseFloat(current.area_sqm) || 0);
+    const parsedMPrice = meter_price !== undefined ? parseFloat(meter_price) : NaN;
+    const mPrice = Number.isFinite(parsedMPrice) ? Math.max(0, parsedMPrice) : (parseFloat(current.meter_price) || 0);
+    const parsedTotal = total_price !== undefined ? parseFloat(total_price) : NaN;
+    const finalTotal = Number.isFinite(parsedTotal)
+      ? Math.max(0, parsedTotal)
+      : ((area_sqm !== undefined || meter_price !== undefined) ? (area * mPrice) : (parseFloat(current.total_price) || 0));
+
+    let finalUnitImagesJson = current.images_json || '[]';
+    if (existing_images !== undefined || (Array.isArray(images) && images.length > 0)) {
+      const mergedUnitUrls = await mergeAndSaveImages(
+        existing_images,
+        images,
+        current.images_json,
+        'units',
+        `unit_${projectId}_${unitId}`,
+        '/uploads/units/'
+      );
+      finalUnitImagesJson = JSON.stringify(mergedUnitUrls);
+    }
 
     const updateRes = await pool.query(`
       UPDATE project_units
@@ -2267,8 +2601,9 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (
         status = COALESCE($7, status),
         reserved_client_name = $8,
         notes = COALESCE($9, notes),
+        images_json = $10,
         updated_at = NOW()
-      WHERE id = $10 AND project_id = $11
+      WHERE id = $11 AND project_id = $12
       RETURNING *
     `, [
       unit_code ? unit_code.trim() : null,
@@ -2280,6 +2615,7 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (
       status,
       reserved_client_name !== undefined ? reserved_client_name : current.reserved_client_name,
       notes,
+      finalUnitImagesJson,
       unitId,
       projectId
     ]);
@@ -2301,7 +2637,7 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (
       unit: updateRes.rows[0]
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في تعديل الوحدة: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2314,13 +2650,15 @@ app.delete('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, asyn
   }
 
   try {
-    const existing = await pool.query('SELECT unit_code FROM project_units WHERE id = $1 AND project_id = $2', [unitId, projectId]);
+    const existing = await pool.query('SELECT unit_code, images_json FROM project_units WHERE id = $1 AND project_id = $2', [unitId, projectId]);
     if (existing.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الوحدة غير موجودة' });
     }
     const unitCode = existing.rows[0].unit_code;
+    const unitImagesJson = existing.rows[0].images_json;
 
     await pool.query('DELETE FROM project_units WHERE id = $1 AND project_id = $2', [unitId, projectId]);
+    await deleteUploadedImagesFromDisk(unitImagesJson, '/uploads/units/');
     await syncProjectUnitsCounters(projectId);
 
     await logActivity({
@@ -2334,26 +2672,13 @@ app.delete('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, asyn
 
     res.json({ success: true, message: 'تم حذف الوحدة بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في حذف الوحدة: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // 10.1 مسح وتفريغ سجل العمليات والرقابة بالكامل (للأونر / المدير العام فقط)
-app.delete('/api/audit-logs', authMiddleware, async (req, res) => {
+app.delete('/api/audit-logs', authMiddleware, requireOwner, async (req, res) => {
   try {
-    const isOwner = req.user && (
-      req.user.email === '1@1.com' || 
-      req.user.id === 1 || 
-      (req.user.role && (req.user.role.includes('Owner') || req.user.role.includes('المالك')))
-    );
-
-    if (!isOwner) {
-      return res.status(403).json({
-        success: false,
-        message: 'غير مصرح! مسح سجل العمليات متاح فقط للمدير العام (الأونر)'
-      });
-    }
-
     // تفريغ جدول سجل العمليات وإعادة ترقيم المعرفات
     await pool.query('TRUNCATE TABLE audit_logs RESTART IDENTITY;');
 
@@ -2362,12 +2687,13 @@ app.delete('/api/audit-logs', authMiddleware, async (req, res) => {
       message: 'تم مسح وتفريغ سجل العمليات بالكامل بنجاح!'
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ أثناء مسح السجل: ' + err.message });
+    console.error('خطأ مسح السجل:', err);
+    res.status(500).json({ success: false, message: 'حدث خطأ أثناء مسح السجل' });
   }
 });
 
 // 9. إحصائيات عامة للأونر
-app.get('/api/owner-stats', authMiddleware, async (req, res) => {
+app.get('/api/owner-stats', authMiddleware, requireOwner, async (req, res) => {
   try {
     const [totalClients, unassignedClients, salesCount, totalValue] = await Promise.all([
       pool.query('SELECT COUNT(*) FROM clients'),
@@ -2386,7 +2712,7 @@ app.get('/api/owner-stats', authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2394,8 +2720,12 @@ app.get('/api/owner-stats', authMiddleware, async (req, res) => {
 
 // اتصالات البث المباشر للرسائل عبر SSE
 let chatSseClients = [];
+const MAX_SSE_CLIENTS = 100; // حد أقصى للاتصالات المتزامنة بالشات
+let chatListenClient = null;
+let chatPubSubReady = false;
 
-function broadcastChatMessage(msg) {
+function deliverChatMessageToLocalClients(msg) {
+  const deadClientIds = [];
   chatSseClients.forEach(client => {
     try {
       // 1. إشعارات النظام ومسح الشات
@@ -2415,20 +2745,85 @@ function broadcastChatMessage(msg) {
         // 3. المحادثات العامة (الجروب): تُبث لكافة أعضاء الفريق
         client.res.write(`data: ${JSON.stringify(msg)}\n\n`);
       }
-    } catch (e) {}
+    } catch (e) {
+      deadClientIds.push(client.id);
+    }
   });
+  if (deadClientIds.length > 0) {
+    chatSseClients = chatSseClients.filter(c => !deadClientIds.includes(c.id));
+  }
 }
 
-// ==================== الجدولة الأسبوعية: مسح الشات تلقائياً كل خميس الساعة 12:00 ليلاً ====================
+async function initChatPubSub() {
+  try {
+    if (chatListenClient) {
+      try { chatListenClient.release(); } catch (_) {}
+      chatListenClient = null;
+    }
+    chatPubSubReady = false;
+    chatListenClient = await pool.connect();
+    await chatListenClient.query('LISTEN crm_chat_channel');
+    chatPubSubReady = true;
+
+    chatListenClient.on('notification', (notification) => {
+      if (notification.channel === 'crm_chat_channel' && notification.payload) {
+        try {
+          const parsedMsg = JSON.parse(notification.payload);
+          deliverChatMessageToLocalClients(parsedMsg);
+        } catch (e) {}
+      }
+    });
+
+    chatListenClient.on('error', () => {
+      chatPubSubReady = false;
+      setTimeout(initChatPubSub, 5000);
+    });
+
+    chatListenClient.on('end', () => {
+      chatPubSubReady = false;
+      setTimeout(initChatPubSub, 5000);
+    });
+  } catch (err) {
+    chatPubSubReady = false;
+    console.warn('تحذير: تعذر تشغيل بث الشات عبر PostgreSQL، سيستمر البث المحلي:', err.message);
+    setTimeout(initChatPubSub, 10000);
+  }
+}
+
+async function broadcastChatMessage(msg) {
+  const payload = JSON.stringify(msg);
+  // pg_notify يدعم حتى ~8000 بايت؛ مع استخدام البث المحلي كـ fallback إذا تعذر الإرسال المشترك
+  if (chatPubSubReady && Buffer.byteLength(payload, 'utf8') < 7500) {
+    try {
+      await pool.query("SELECT pg_notify('crm_chat_channel', $1)", [payload]);
+      return;
+    } catch (err) {
+      console.warn('pg_notify fallback to local SSE:', err.message);
+    }
+  }
+  deliverChatMessageToLocalClients(msg);
+}
+
+// ==================== الجدولة الأسبوعية: مسح الشات تلقائياً كل خميس الساعة 12:00 ليلاً (توقيت القاهرة) ====================
+function getCairoNow(now = new Date()) {
+  try {
+    return new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Cairo' }));
+  } catch (_) {
+    return new Date(now);
+  }
+}
+
 function getMostRecentThursdayMidnight(now = new Date()) {
-  const d = new Date(now);
+  const d = getCairoNow(now);
   const day = d.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed, 4: Thu, 5: Fri, 6: Sat
   // ليلة الخميس الساعة 12:00 منتصف الليل تطابق تقويمياً يوم الجمعة الساعة 00:00:00
-  let daysSince = (day - 5 + 7) % 7;
+  const daysSince = (day - 5 + 7) % 7;
   const target = new Date(d);
   target.setDate(d.getDate() - daysSince);
   target.setHours(0, 0, 0, 0);
-  return target;
+  // تحويل الفرق الزمني إلى UTC الفعلي
+  const offsetMs = d.getTime() - now.getTime();
+  return new Date(target.getTime() - offsetMs);
 }
 
 let lastThursdayMidnightClearedKey = null;
@@ -2436,9 +2831,10 @@ let lastThursdayMidnightClearedKey = null;
 async function checkAndExecuteThursdayChatCleanup() {
   try {
     const now = new Date();
-    const day = now.getDay();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
+    const cairoNow = getCairoNow(now);
+    const day = cairoNow.getDay();
+    const hours = cairoNow.getHours();
+    const minutes = cairoNow.getMinutes();
 
     const mostRecentMidnight = getMostRecentThursdayMidnight(now);
 
@@ -2507,11 +2903,15 @@ async function checkAndExecuteThursdayChatCleanup() {
   }
 }
 
-// تشغيل الفحص الدوري كل 30 ثانية
-setInterval(checkAndExecuteThursdayChatCleanup, 30000);
+// تشغيل الفحص الدوري كل 5 دقائق (تقليل الحِمل على DB بدلاً من 30 ثانية)
+setInterval(checkAndExecuteThursdayChatCleanup, 5 * 60 * 1000).unref();
 
 // 1. مسار البث اللحظي للرسائل (Server-Sent Events مع نبضات Keep-Alive لمنع انقطاع الاتصال)
 app.get('/api/chat/stream', authMiddleware, (req, res) => {
+  if (chatSseClients.length >= MAX_SSE_CLIENTS) {
+    return res.status(503).json({ success: false, message: 'الخادم مشغول، يرجى المحاولة لاحقاً' });
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -2539,9 +2939,12 @@ app.get('/api/chat/stream', authMiddleware, (req, res) => {
 // 2. جلب سجل الرسائل الأخيرة (جروب عام أو محادثة خاصة)
 app.get('/api/chat/messages', authMiddleware, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit, 10) || 150;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 150, 1), 500);
     const chatType = req.query.type || 'group';
-    const withUserId = req.query.withUserId ? parseInt(req.query.withUserId, 10) : null;
+    const withUserId = req.query.withUserId ? parsePositiveInt(req.query.withUserId) : null;
+    if (req.query.withUserId && !withUserId) {
+      return res.status(400).json({ success: false, message: 'معرف المستخدم غير صحيح' });
+    }
     const currentUserId = req.user.id;
 
     let result;
@@ -2587,12 +2990,12 @@ app.get('/api/chat/messages', authMiddleware, async (req, res) => {
       privateConversations: privateSummaries.rows,
       currentUser: {
         id: req.user.id,
-        name: req.user.full_name || req.user.fullName || (req.user.email === '1@1.com' ? 'المدير العام' : 'سيلز'),
-        role: req.user.role || (req.user.email === '1@1.com' ? 'المالك (Owner)' : 'سيلز (Sales)')
+        name: req.user.full_name || req.user.fullName || (isUserOwner(req.user) ? 'المدير العام' : 'سيلز'),
+        role: req.user.role || 'سيلز (Sales)'
       }
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب الرسائل: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2605,8 +3008,8 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
 
   try {
     const senderId = req.user.id;
-    const senderName = req.user.full_name || req.user.fullName || (req.user.email === '1@1.com' ? 'المدير العام' : 'سيلز');
-    const senderRole = req.user.role || (req.user.email === '1@1.com' ? 'المالك (Owner)' : 'سيلز (Sales)');
+    const senderName = req.user.full_name || req.user.fullName || (isUserOwner(req.user) ? 'المدير العام' : 'سيلز');
+    const senderRole = req.user.role || 'سيلز (Sales)';
 
     let targetChatType = 'group';
     let targetRecipientId = null;
@@ -2614,7 +3017,10 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
 
     if (chat_type === 'private' && recipient_id) {
       targetChatType = 'private';
-      targetRecipientId = parseInt(recipient_id, 10);
+      targetRecipientId = parsePositiveInt(recipient_id);
+      if (!targetRecipientId) {
+        return res.status(400).json({ success: false, message: 'معرف المستلم غير صحيح' });
+      }
       
       const userRes = await pool.query('SELECT full_name FROM users WHERE id = $1', [targetRecipientId]);
       if (userRes.rows.length === 0) {
@@ -2636,7 +3042,7 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
 
     res.json({ success: true, message: savedMsg });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ أثناء إرسال الرسالة: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2656,21 +3062,12 @@ app.get('/api/chat/members', authMiddleware, async (req, res) => {
       members: result.rows
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في جلب أعضاء الفريق: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
 // 5. مسح الشات يدوياً من الإعدادات (خاص بالمالك / الأونر فقط)
-app.post('/api/chat/clear', authMiddleware, async (req, res) => {
-  const isOwner = req.user && (
-    (req.user.role && (req.user.role.includes('Owner') || req.user.role.includes('المالك'))) ||
-    req.user.email === '1@1.com'
-  );
-
-  if (!isOwner) {
-    return res.status(403).json({ success: false, message: 'صلاحية مسح الشات مقتصرة على المالك (Owner) فقط' });
-  }
-
+app.post('/api/chat/clear', authMiddleware, requireOwner, async (req, res) => {
   const { target, with_user_id } = req.body || {}; // target: 'group' | 'all' | 'private'
 
   try {
@@ -2681,13 +3078,17 @@ app.post('/api/chat/clear', authMiddleware, async (req, res) => {
       delRes = await pool.query("DELETE FROM chat_messages WHERE chat_type = 'group' OR recipient_id IS NULL RETURNING id");
       clearDesc = 'مسح محادثات الجروب العام للفريق';
     } else if (target === 'private' && with_user_id) {
+      const parsedWithUserId = parsePositiveInt(with_user_id);
+      if (!parsedWithUserId) {
+        return res.status(400).json({ success: false, message: 'معرف الموظف غير صحيح' });
+      }
       delRes = await pool.query(`
         DELETE FROM chat_messages 
         WHERE chat_type = 'private' 
           AND ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)) 
         RETURNING id
-      `, [req.user.id, parseInt(with_user_id, 10)]);
-      clearDesc = `مسح المحادثة الخاصة مع الموظف رقم (${with_user_id})`;
+      `, [req.user.id, parsedWithUserId]);
+      clearDesc = `مسح المحادثة الخاصة مع الموظف رقم (${parsedWithUserId})`;
     } else {
       delRes = await pool.query('DELETE FROM chat_messages RETURNING id');
       clearDesc = 'مسح وتصفير كافة محادثات النظام بالكامل (الجروب والخاص)';
@@ -2715,7 +3116,7 @@ app.post('/api/chat/clear', authMiddleware, async (req, res) => {
       deletedCount: delRes.rows.length 
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'خطأ في مسح الشات: ' + err.message });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -2736,14 +3137,18 @@ app.use((err, req, res, next) => {
   if (res.headersSent) {
     return next(err);
   }
-  res.status(err.status || 500).json({
+  const status = err.status || 500;
+  res.status(status).json({
     success: false,
-    message: err.message || 'حدث خطأ غير متوقع في الخادم'
+    message: status >= 500 ? 'حدث خطأ غير متوقع في الخادم' : (err.message || 'حدث خطأ في الطلب')
   });
 });
 
 // بدء الخادم بعد تهيئة قاعدة البيانات
 initDB().then(async () => {
+  // تفعيل البث المشترك للشات عبر PostgreSQL LISTEN/NOTIFY
+  await initChatPubSub();
+
   // فحص الجدولة الأسبوعية للشات فور بدء التشغيل
   await checkAndExecuteThursdayChatCleanup();
 

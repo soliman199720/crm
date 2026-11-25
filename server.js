@@ -228,13 +228,10 @@ app.get('/api/db-status', async (req, res) => {
   }
 });
 
-// دالة استخراج وتطهير عنوان الـ IP الحقيقي بأمان
+// دالة استخراج وتطهير عنوان الـ IP الحقيقي بأمان (تعتمد على req.ip المضبوط عبر trust proxy)
 function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded && typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim().slice(0, 45);
-  }
-  return (req.socket.remoteAddress || '127.0.0.1').slice(0, 45);
+  const ip = req.ip || (req.socket && req.socket.remoteAddress) || '127.0.0.1';
+  return String(ip).slice(0, 45);
 }
 
 // حماية ضد هجمات التخمين عبر قاعدة البيانات PostgreSQL (متوافقة مع Multi-Process / Cluster)
@@ -244,7 +241,7 @@ setInterval(async () => {
       "DELETE FROM login_attempts WHERE first_attempt_at < NOW() - INTERVAL '30 minutes' AND (blocked_until IS NULL OR blocked_until < NOW())"
     );
   } catch (e) {}
-}, 15 * 60 * 1000);
+}, 15 * 60 * 1000).unref();
 
 async function loginRateLimiter(req, res, next) {
   const ip = getClientIp(req);
@@ -526,7 +523,7 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
   if (!userId) {
     return res.status(400).json({ success: false, message: 'معرف المستخدم غير صحيح' });
   }
-  const { full_name, password, role } = req.body;
+  const { full_name, password, role, is_active } = req.body;
   if (password && password.trim() !== '' && password.trim().length < 6) {
     return res.status(400).json({ success: false, message: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
   }
@@ -565,6 +562,7 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
     }
 
     const trimmedFullName = (typeof full_name === 'string' && full_name.trim()) ? full_name.trim() : null;
+    const newIsActive = (!isPrimaryOwner && typeof is_active === 'boolean') ? is_active : null;
 
     if (password && password.trim() !== '') {
       const salt = await bcrypt.genSalt(12);
@@ -573,20 +571,22 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
         UPDATE users 
         SET full_name = COALESCE($1, full_name), 
             role = COALESCE($2, role),
-            password = $3 
-        WHERE id = $4 
-        RETURNING id, username, email, full_name, role
+            is_active = COALESCE($3, is_active),
+            password = $4 
+        WHERE id = $5 
+        RETURNING id, username, email, full_name, role, is_active
       `;
-      params = [trimmedFullName, newRole, hashedPassword, userId];
+      params = [trimmedFullName, newRole, newIsActive, hashedPassword, userId];
     } else {
       updateQuery = `
         UPDATE users 
         SET full_name = COALESCE($1, full_name),
-            role = COALESCE($2, role)
-        WHERE id = $3 
-        RETURNING id, username, email, full_name, role
+            role = COALESCE($2, role),
+            is_active = COALESCE($3, is_active)
+        WHERE id = $4 
+        RETURNING id, username, email, full_name, role, is_active
       `;
-      params = [trimmedFullName, newRole, userId];
+      params = [trimmedFullName, newRole, newIsActive, userId];
     }
 
     const result = await pool.query(updateQuery, params);
@@ -690,13 +690,26 @@ app.post('/api/sales-reps', authMiddleware, requireOwner, async (req, res) => {
     return res.status(400).json({ success: false, message: 'يرجى إدخال الاسم والبريد الإلكتروني' });
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ success: false, message: 'صيغة البريد الإلكتروني غير صحيحة' });
+  }
+  if (password !== undefined && password !== '' && (typeof password !== 'string' || password.trim().length < 6)) {
+    return res.status(400).json({ success: false, message: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+  }
+
   try {
+    const existCheck = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+    if (existCheck.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'البريد الإلكتروني مسجل مسبقاً في النظام' });
+    }
+
     const salt = await bcrypt.genSalt(12);
     const rawPassword = (password && typeof password === 'string' && password.trim().length >= 6)
       ? password.trim()
       : crypto.randomBytes(12).toString('hex');
     const hashedPassword = await bcrypt.hash(rawPassword, salt);
-    const baseUsername = email.trim().toLowerCase().split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') || 'sales';
+    const baseUsername = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '') || 'sales';
     const username = `${baseUsername}_${Date.now().toString().slice(-4)}${Math.floor(100 + Math.random() * 900)}`;
 
     const query = `
@@ -704,10 +717,20 @@ app.post('/api/sales-reps', authMiddleware, requireOwner, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, 'سيلز (Sales)')
       RETURNING id, full_name, email, phone, role
     `;
-    const result = await pool.query(query, [username, email.trim().toLowerCase(), hashedPassword, full_name.trim(), phone || '']);
+    const result = await pool.query(query, [username, cleanEmail, hashedPassword, full_name.trim(), phone || '']);
+
+    await logActivity({
+      req,
+      actionType: 'إنشاء حساب سيلز',
+      actionCategory: 'إدارة المستخدمين',
+      targetType: 'سيلز',
+      targetName: full_name.trim(),
+      details: `تم إنشاء حساب سيلز جديد باسم (${full_name.trim()}) بالبريد: ${cleanEmail}`
+    });
+
     res.status(201).json({ success: true, salesRep: result.rows[0], message: 'تمت إضافة مسؤول المبيعات بنجاح' });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'البريد مسجل مسبقاً أو حدث خطأ' });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
@@ -827,7 +850,7 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
       phone.trim(),
       email || '',
       project_interest || 'مشروع وتطوير أعمال',
-      parseFloat(total_value) || 0,
+      Math.max(0, parseFloat(total_value) || 0),
       salesId,
       salesName,
       createdById,
@@ -881,7 +904,7 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
       const company = (c.company || '').trim();
       const email = (c.email || '').trim();
       const project_interest = (c.project_interest || 'مشروع وتطوير أعمال').trim();
-      const total_value = parseFloat(c.total_value) || 0;
+      const total_value = Math.max(0, parseFloat(c.total_value) || 0);
       const notes = (c.notes || '').trim();
 
       const insertRes = await clientDb.query(
@@ -975,7 +998,7 @@ const updateClientHandler = async (req, res) => {
         phone.trim(),
         email ? email.trim() : '',
         project_interest ? project_interest.trim() : 'مشروع وتطوير أعمال',
-        parseFloat(total_value) || 0,
+        Math.max(0, parseFloat(total_value) || 0),
         notes ? notes.trim() : '',
         clientId
       ]
@@ -1232,8 +1255,11 @@ app.post('/api/clients/custom-quota-distribute', authMiddleware, requireOwner, a
       if (!salesId || requestedCount <= 0) continue;
       if (clientIndex >= unassignedClients.length) break;
 
-      // جلب اسم موظف السيلز
-      const salesQuery = await clientDb.query("SELECT full_name FROM users WHERE id = $1", [salesId]);
+      // جلب اسم موظف السيلز النشط
+      const salesQuery = await clientDb.query(
+        "SELECT full_name FROM users WHERE id = $1 AND (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE)",
+        [salesId]
+      );
       if (salesQuery.rows.length === 0) continue;
       const salesName = salesQuery.rows[0].full_name;
 
@@ -1942,19 +1968,21 @@ app.get('/api/projects/:id', authMiddleware, async (req, res) => {
 });
 
 const MAX_SINGLE_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB حد أقصى للصورة الواحدة
+const MAX_IMAGES_PER_REQUEST = 15; // حد أقصى لعدد الصور في الطلب الواحد
 
 // دالة عامة لحفظ الصور المرفوعة (مشروعات أو وحدات) على القرص بشكل غير متزامن
 async function saveUploadedImagesToDisk(imagesArray, folderName, filePrefix) {
   if (!Array.isArray(imagesArray) || imagesArray.length === 0) return [];
 
+  const limitedImages = imagesArray.slice(0, MAX_IMAGES_PER_REQUEST);
   const uploadDir = path.join(__dirname, 'public', 'uploads', folderName);
   await fs.promises.mkdir(uploadDir, { recursive: true });
 
   const savedUrls = [];
   const timestamp = Date.now();
 
-  for (let idx = 0; idx < imagesArray.length; idx++) {
-    const dataUrl = imagesArray[idx];
+  for (let idx = 0; idx < limitedImages.length; idx++) {
+    const dataUrl = limitedImages[idx];
     if (typeof dataUrl !== 'string') continue;
     const match = dataUrl.match(/^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/i);
     if (!match) continue;
@@ -2042,7 +2070,7 @@ app.post('/api/projects', authMiddleware, async (req, res) => {
     normalizedCategory = 'commercial';
   }
 
-  const area = parseFloat(area_sqm) || 0;
+  const area = Math.max(0, parseFloat(area_sqm) || 0);
 
   try {
     const query = `
@@ -2186,11 +2214,11 @@ app.put('/api/projects/:id', authMiddleware, async (req, res) => {
     const result = await pool.query(query, [
       normalizedCategory,
       name.trim(),
-      area_sqm !== undefined ? (parseFloat(area_sqm) || 0) : current.area_sqm,
+      area_sqm !== undefined ? Math.max(0, parseFloat(area_sqm) || 0) : current.area_sqm,
       location !== undefined ? location.trim() : (current.location || ''),
       project_type ? project_type.trim() : (current.project_type || 'تجاري'),
-      meter_price !== undefined ? (parseFloat(meter_price) || 0) : current.meter_price,
-      starting_price !== undefined ? (parseFloat(starting_price) || 0) : current.starting_price,
+      meter_price !== undefined ? Math.max(0, parseFloat(meter_price) || 0) : current.meter_price,
+      starting_price !== undefined ? Math.max(0, parseFloat(starting_price) || 0) : current.starting_price,
       down_payment_pct !== undefined ? (parseFloat(down_payment_pct) || 10) : current.down_payment_pct,
       installment_years !== undefined ? (parseInt(installment_years, 10) || 5) : current.installment_years,
       delivery_date !== undefined ? delivery_date.trim() : current.delivery_date,
@@ -2278,28 +2306,41 @@ app.get('/api/projects/:id/interested-clients', authMiddleware, async (req, res)
     const project = projectRes.rows[0];
 
     const locationPart = (project.location || '').split('-')[0].trim();
+    const categoryKeywordsMap = {
+      commercial: ['تجاري', 'إداري', 'مول', 'مكتب'],
+      residential: ['سكني', 'شقة', 'فيلا', 'كمبوند'],
+      lands: ['أرض', 'أراضي', 'قطعة']
+    };
+    const catKeywords = categoryKeywordsMap[project.category] || ['تجاري', 'سكني', 'أراضي'];
+    const params = [`%${project.name}%`, `%${locationPart}%`];
+    const catConditions = catKeywords.map(kw => {
+      params.push(`%${kw}%`);
+      return `LOWER(c.project_interest) LIKE LOWER($${params.length})`;
+    }).join(' OR ');
+
+    let salesFilterSql = '';
+    if (!isUserOwner(req.user)) {
+      params.push(req.user.id);
+      salesFilterSql = `AND c.assigned_sales_id = $${params.length}`;
+    }
 
     const query = `
       SELECT 
         c.id, c.name, c.phone, c.project_interest, c.total_value, c.status,
         c.assigned_sales_name, c.created_at, c.notes
       FROM clients c
-      WHERE 
+      WHERE (
         LOWER(c.project_interest) LIKE LOWER($1)
         OR LOWER(c.notes) LIKE LOWER($1)
         OR (length($2) > 3 AND (LOWER(c.project_interest) LIKE LOWER($2) OR LOWER(c.notes) LIKE LOWER($2)))
-        OR LOWER(c.project_interest) LIKE '%تجاري%'
-        OR LOWER(c.project_interest) LIKE '%إداري%'
-        OR LOWER(c.project_interest) LIKE '%مول%'
-        OR LOWER(c.project_interest) LIKE '%مكتب%'
+        OR ${catConditions}
+      )
+      ${salesFilterSql}
       ORDER BY c.id DESC
       LIMIT 50
     `;
 
-    const clientsRes = await pool.query(query, [
-      `%${project.name}%`,
-      `%${locationPart}%`
-    ]);
+    const clientsRes = await pool.query(query, params);
 
     res.json({
       success: true,
@@ -2436,9 +2477,9 @@ app.post('/api/projects/:id/units', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: `كود الوحدة (${unit_code}) موجود بالفعل في هذا المشروع` });
     }
 
-    const area = parseFloat(area_sqm) || 0;
-    const mPrice = parseFloat(meter_price) || 0;
-    const calcTotalPrice = parseFloat(total_price) || (area * mPrice) || 0;
+    const area = Math.max(0, parseFloat(area_sqm) || 0);
+    const mPrice = Math.max(0, parseFloat(meter_price) || 0);
+    const calcTotalPrice = Math.max(0, parseFloat(total_price) || (area * mPrice) || 0);
 
     const insertRes = await pool.query(`
       INSERT INTO project_units (
@@ -2527,12 +2568,12 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, async (req, res) => {
     }
 
     const parsedArea = area_sqm !== undefined ? parseFloat(area_sqm) : NaN;
-    const area = Number.isFinite(parsedArea) ? parsedArea : parseFloat(current.area_sqm) || 0;
+    const area = Number.isFinite(parsedArea) ? Math.max(0, parsedArea) : (parseFloat(current.area_sqm) || 0);
     const parsedMPrice = meter_price !== undefined ? parseFloat(meter_price) : NaN;
-    const mPrice = Number.isFinite(parsedMPrice) ? parsedMPrice : parseFloat(current.meter_price) || 0;
+    const mPrice = Number.isFinite(parsedMPrice) ? Math.max(0, parsedMPrice) : (parseFloat(current.meter_price) || 0);
     const parsedTotal = total_price !== undefined ? parseFloat(total_price) : NaN;
     const finalTotal = Number.isFinite(parsedTotal)
-      ? parsedTotal
+      ? Math.max(0, parsedTotal)
       : ((area_sqm !== undefined || meter_price !== undefined) ? (area * mPrice) : (parseFloat(current.total_price) || 0));
 
     let finalUnitImagesJson = current.images_json || '[]';
@@ -2763,16 +2804,26 @@ async function broadcastChatMessage(msg) {
   deliverChatMessageToLocalClients(msg);
 }
 
-// ==================== الجدولة الأسبوعية: مسح الشات تلقائياً كل خميس الساعة 12:00 ليلاً ====================
+// ==================== الجدولة الأسبوعية: مسح الشات تلقائياً كل خميس الساعة 12:00 ليلاً (توقيت القاهرة) ====================
+function getCairoNow(now = new Date()) {
+  try {
+    return new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Cairo' }));
+  } catch (_) {
+    return new Date(now);
+  }
+}
+
 function getMostRecentThursdayMidnight(now = new Date()) {
-  const d = new Date(now);
+  const d = getCairoNow(now);
   const day = d.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed, 4: Thu, 5: Fri, 6: Sat
   // ليلة الخميس الساعة 12:00 منتصف الليل تطابق تقويمياً يوم الجمعة الساعة 00:00:00
-  let daysSince = (day - 5 + 7) % 7;
+  const daysSince = (day - 5 + 7) % 7;
   const target = new Date(d);
   target.setDate(d.getDate() - daysSince);
   target.setHours(0, 0, 0, 0);
-  return target;
+  // تحويل الفرق الزمني إلى UTC الفعلي
+  const offsetMs = d.getTime() - now.getTime();
+  return new Date(target.getTime() - offsetMs);
 }
 
 let lastThursdayMidnightClearedKey = null;
@@ -2780,9 +2831,10 @@ let lastThursdayMidnightClearedKey = null;
 async function checkAndExecuteThursdayChatCleanup() {
   try {
     const now = new Date();
-    const day = now.getDay();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
+    const cairoNow = getCairoNow(now);
+    const day = cairoNow.getDay();
+    const hours = cairoNow.getHours();
+    const minutes = cairoNow.getMinutes();
 
     const mostRecentMidnight = getMostRecentThursdayMidnight(now);
 
@@ -2852,7 +2904,7 @@ async function checkAndExecuteThursdayChatCleanup() {
 }
 
 // تشغيل الفحص الدوري كل 5 دقائق (تقليل الحِمل على DB بدلاً من 30 ثانية)
-setInterval(checkAndExecuteThursdayChatCleanup, 5 * 60 * 1000);
+setInterval(checkAndExecuteThursdayChatCleanup, 5 * 60 * 1000).unref();
 
 // 1. مسار البث اللحظي للرسائل (Server-Sent Events مع نبضات Keep-Alive لمنع انقطاع الاتصال)
 app.get('/api/chat/stream', authMiddleware, (req, res) => {

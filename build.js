@@ -35,7 +35,9 @@ console.log('🧹 [1/4] تنظيف وتجهيز مجلد dist...');
 if (fs.existsSync(distDir)) {
   try {
     fs.rmSync(distDir, { recursive: true, force: true });
-  } catch (e) {}
+  } catch (e) {
+    console.warn('   ! تحذير: تعذر حذف بعض ملفات dist القديمة:', e.message);
+  }
 }
 if (!fs.existsSync(distDir)) {
   fs.mkdirSync(distDir, { recursive: true });
@@ -51,6 +53,8 @@ const filesToCopy = [
   '.env.example',
   'schema.sql',
   'start.sh',
+  'start_production.sh',
+  'start_production.bat',
   'README.md'
 ];
 

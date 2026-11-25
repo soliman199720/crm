@@ -274,8 +274,19 @@
         }
       };
 
-      sseSource.onerror = () => {
+      sseSource.onerror = async () => {
         const subtitle = document.getElementById('chatHeaderSubtitle');
+        try {
+          const authCheck = await fetch('/api/me');
+          if (authCheck.status === 401 || authCheck.status === 403) {
+            if (sseSource) {
+              sseSource.close();
+              sseSource = null;
+            }
+            if (subtitle) subtitle.textContent = 'انتهت الجلسة، يرجى تسجيل الدخول';
+            return;
+          }
+        } catch (_) {}
         if (subtitle) subtitle.textContent = 'إعادة الاتصال بالخادم...';
       };
     } catch (err) {
@@ -483,7 +494,7 @@
 
       const data = await res.json();
       if (!data.success) {
-        alert(data.message || 'فشل إرسال الرسالة');
+        showChatNotice(data.message || 'فشل إرسال الرسالة');
       }
     } catch (err) {
       console.error('خطأ إرسال الرسالة:', err);
@@ -730,7 +741,7 @@
       if (data.success) {
         closeChatConfirmModal();
       } else {
-        alert(data.message || 'فشل مسح الشات');
+        showChatNotice(data.message || 'فشل مسح الشات');
       }
     } catch (err) {
       console.error('خطأ مسح الشات:', err);
@@ -917,6 +928,17 @@
     } catch (e) {
       return 'اليوم';
     }
+  }
+
+  function showChatNotice(message) {
+    const existing = document.getElementById('chatWidgetNotice');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.id = 'chatWidgetNotice';
+    toast.style.cssText = 'position:fixed;bottom:90px;left:24px;background:#dc2626;color:#fff;padding:10px 18px;border-radius:10px;z-index:10001;font-size:0.9rem;box-shadow:0 4px 14px rgba(0,0,0,0.25);';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3500);
   }
 
   function escapeHtml(str) {

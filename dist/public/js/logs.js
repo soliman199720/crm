@@ -46,9 +46,7 @@ function isOwnerLog(log) {
   if (!log) return false;
   const actorRole = log.user_role || '';
   const actorName = log.user_name || '';
-  const actorEmail = log.user_email || '';
-  return actorEmail === '1@1.com' ||
-         actorRole.includes('Owner') ||
+  return actorRole.includes('Owner') ||
          actorRole.includes('المالك') ||
          actorName.includes('المدير العام') ||
          actorName.includes('الأونر');
@@ -90,10 +88,10 @@ async function verifySession() {
 
     const user = data.user;
     document.getElementById('ownerNameDisplay').textContent = user.fullName || 'المدير العام';
-    document.getElementById('ownerEmailDisplay').textContent = user.email || '1@1.com';
+    document.getElementById('ownerEmailDisplay').textContent = user.email || '';
 
     // حماية زر مسح السجل ليكون متاحاً للأونر فقط
-    const isOwner = user.email === '1@1.com' || (user.role && (user.role.includes('Owner') || user.role.includes('المالك')));
+    const isOwner = user.role && (user.role.includes('Owner') || user.role.includes('المالك'));
     const clearBtn = document.getElementById('btnClearAllLogs');
     if (clearBtn) {
       clearBtn.style.display = isOwner ? 'inline-flex' : 'none';
@@ -126,7 +124,7 @@ async function loadLogs() {
         // حصر قائمة المستخدمين في موظفي السيلز فقط
         availableUsers = usersData.users.filter(u => {
           const role = u.role || '';
-          return !role.includes('Owner') && !role.includes('المالك') && u.email !== '1@1.com';
+          return !role.includes('Owner') && !role.includes('المالك');
         });
       }
     } catch (e) {
@@ -869,15 +867,7 @@ async function logout() {
   window.location.href = '/';
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// escapeHtml provided globally by global-loader.js
 
 // 17. وظائف مسح سجل العمليات بالكامل (مخصصة للأونر فقط)
 function openClearLogsModal() {

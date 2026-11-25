@@ -164,7 +164,7 @@ function renderProjectDetails(root, p) {
       <h3><i class="fa-regular fa-images"></i> صور المشروع (${safeImages.length})</h3>
       <div class="details-gallery-grid">
         ${safeImages.map((url, idx) => `
-          <div class="details-gallery-item" onclick="openImageLightbox('${escapeHtml(url)}')">
+          <div class="details-gallery-item" data-lightbox-url="${escapeHtml(url)}" onclick="openImageLightbox(this.dataset.lightboxUrl)">
             <img src="${escapeHtml(url)}" alt="${escapeHtml(p.name)} - صورة ${idx + 1}" loading="lazy">
           </div>
         `).join('')}
@@ -556,12 +556,15 @@ function renderSelectedUnitImages() {
     return;
   }
 
-  grid.innerHTML = selectedUnitImages.map((img, idx) => `
-    <div class="proj-preview-thumb">
-      <img src="${img.dataUrl}" alt="صورة وحدة ${idx + 1}">
-      <button type="button" class="btn-remove-preview" onclick="removeSelectedUnitImage(${idx})" title="إزالة الصورة">&times;</button>
-    </div>
-  `).join('');
+  grid.innerHTML = selectedUnitImages.map((img, idx) => {
+    const safeSrc = (typeof window.isSafeImageUrl === 'function' && window.isSafeImageUrl(img.dataUrl)) ? img.dataUrl : '';
+    return `
+      <div class="proj-preview-thumb">
+        <img src="${escapeHtml(safeSrc)}" alt="صورة وحدة ${idx + 1}">
+        <button type="button" class="btn-remove-preview" onclick="removeSelectedUnitImage(${idx})" title="إزالة الصورة">&times;</button>
+      </div>
+    `;
+  }).join('');
 }
 
 async function handleSaveUnit(event) {
@@ -679,9 +682,12 @@ function renderUnitsGrid(units) {
   }
 
   grid.innerHTML = units.map(u => {
-    let unitImages = [];
-    try { unitImages = JSON.parse(u.images_json || '[]'); } catch (_) {}
-    const cover = Array.isArray(unitImages) && unitImages.length > 0 ? unitImages[0] : '';
+    let rawUnitImages = [];
+    try { rawUnitImages = JSON.parse(u.images_json || '[]'); } catch (_) {}
+    const unitImages = Array.isArray(rawUnitImages)
+      ? rawUnitImages.filter(url => typeof url === 'string' && (url.startsWith('/uploads/') || /^https?:\/\//i.test(url)))
+      : [];
+    const cover = unitImages.length > 0 ? unitImages[0] : '';
 
     let statusClass = 'unit-status-avail';
     if (u.status === 'محجوز') statusClass = 'unit-status-res';
@@ -694,7 +700,7 @@ function renderUnitsGrid(units) {
     return `
       <div class="unit-card">
         ${cover ? `
-          <div class="unit-card-cover" onclick="openImageLightbox('${escapeHtml(cover)}')">
+          <div class="unit-card-cover" data-lightbox-url="${escapeHtml(cover)}" onclick="openImageLightbox(this.dataset.lightboxUrl)">
             <img src="${escapeHtml(cover)}" alt="${escapeHtml(u.unit_code)}" loading="lazy">
             ${unitImages.length > 1 ? `<span class="project-card-photos-count"><i class="fa-regular fa-images"></i> ${unitImages.length} صور</span>` : ''}
           </div>
@@ -728,7 +734,7 @@ function renderUnitsGrid(units) {
         ${unitImages.length > 1 ? `
           <div class="unit-mini-thumbs">
             ${unitImages.map((imgUrl, idx) => `
-              <img src="${escapeHtml(imgUrl)}" alt="صورة ${idx + 1}" onclick="openImageLightbox('${escapeHtml(imgUrl)}')">
+              <img src="${escapeHtml(imgUrl)}" alt="صورة ${idx + 1}" data-lightbox-url="${escapeHtml(imgUrl)}" onclick="openImageLightbox(this.dataset.lightboxUrl)">
             `).join('')}
           </div>
         ` : ''}

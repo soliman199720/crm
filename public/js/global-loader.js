@@ -30,11 +30,23 @@
       .replace(/'/g, '&#039;');
   };
 
+  // دالة للتحقق من أمان روابط الصور (تسمح بالرفع المحلي وروابط http/https و data:image فقط)
+  window.isSafeImageUrl = function(url) {
+    if (typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    return trimmed.startsWith('/uploads/') ||
+      /^https?:\/\//i.test(trimmed) ||
+      /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(trimmed);
+  };
+
   // ضبط شريط التنقل العلوي في صفحات المشروعات حسب صلاحية المستخدم (أونر أم سيلز)
   window.applyProjectsTopbarForRole = function(user) {
     const role = (user && user.role) ? user.role : '';
     const isOwner = role.includes('Owner') || role.includes('المالك');
-    if (isOwner) return;
+    if (isOwner) {
+      document.body.classList.add('role-owner');
+      return;
+    }
 
     document.querySelectorAll('.topbar-nav-pills a[href="/sales"], .topbar-nav-pills a[href="/users"], .topbar-nav-pills a[href="/logs"]').forEach(function(el) {
       el.remove();

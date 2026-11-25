@@ -602,12 +602,15 @@ function renderSelectedProjectImages() {
     return;
   }
 
-  grid.innerHTML = selectedProjectImages.map((img, idx) => `
-    <div class="proj-preview-thumb">
-      <img src="${img.dataUrl}" alt="صورة ${idx + 1}">
-      <button type="button" class="btn-remove-preview" onclick="removeSelectedProjectImage(${idx})" title="إزالة الصورة">&times;</button>
-    </div>
-  `).join('');
+  grid.innerHTML = selectedProjectImages.map((img, idx) => {
+    const safeSrc = (typeof window.isSafeImageUrl === 'function' && window.isSafeImageUrl(img.dataUrl)) ? img.dataUrl : '';
+    return `
+      <div class="proj-preview-thumb">
+        <img src="${escapeHtml(safeSrc)}" alt="صورة ${idx + 1}">
+        <button type="button" class="btn-remove-preview" onclick="removeSelectedProjectImage(${idx})" title="إزالة الصورة">&times;</button>
+      </div>
+    `;
+  }).join('');
 }
 
 // 6. حفظ المشروع الجديد وتوجيهه تلقائياً

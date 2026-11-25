@@ -2203,3 +2203,18 @@
   background: #eef2ff;
   border-color: #6366f1;
 }
+
+/* منع وميض عناصر الأونر في الشريط العلوي قبل التحقق من الصلاحية */
+.sales-topbar .topbar-nav-pills a[href="/sales"],
+.sales-topbar .topbar-nav-pills a[href="/users"],
+.sales-topbar .topbar-nav-pills a[href="/logs"],
+.sales-topbar .db-live-pill {
+  visibility: hidden;
+}
+
+body.role-owner .sales-topbar .topbar-nav-pills a[href="/sales"],
+body.role-owner .sales-topbar .topbar-nav-pills a[href="/users"],
+body.role-owner .sales-topbar .topbar-nav-pills a[href="/logs"],
+body.role-owner .sales-topbar .db-live-pill {
+  visibility: visible;
+}

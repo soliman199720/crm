@@ -129,7 +129,7 @@ function renderUsersTable(users) {
   }
 
   container.innerHTML = users.map(user => {
-    const isMasterOwner = (user.email === '1@1.com' || user.id === 1);
+    const isMasterOwner = (user.id === 1);
     const isOwner = isMasterOwner || (user.role && (user.role.includes('Owner') || user.role.includes('المالك')));
     const isSales = !isOwner;
 
@@ -216,7 +216,7 @@ function renderUsersTable(users) {
             <span>تعديل الحساب</span>
           </button>
           ${!isMasterOwner ? `
-            <button type="button" class="btn-card-delete" onclick="openDeleteUserModal(${user.id}, '${escapeHtml(user.full_name)}')" title="حذف حساب الموظف">
+            <button type="button" class="btn-card-delete" onclick="openDeleteUserModal(${user.id})" title="حذف حساب الموظف">
               <i class="fa-solid fa-trash-can"></i>
               <span>حذف</span>
             </button>
@@ -304,8 +304,8 @@ function openEditUserModal(userId) {
     } else {
       roleSelect.value = 'سيلز (Sales)';
     }
-    // حماية حساب الأونر الرئيسي 1@1.com
-    roleSelect.disabled = (user.email === '1@1.com');
+    // حماية حساب الأونر الرئيسي
+    roleSelect.disabled = (user.id === 1);
   }
 
   document.getElementById('editUserModal').classList.remove('d-none');
@@ -355,10 +355,11 @@ async function handleEditUser(e) {
 // 8. حذف مستخدم مع نافذة تأكيد مخصصة في منتصف الشاشة
 let userToDeleteId = null;
 
-function openDeleteUserModal(userId, userName) {
+function openDeleteUserModal(userId) {
   userToDeleteId = userId;
+  const userObj = allUsers.find(u => u.id === userId);
   const nameEl = document.getElementById('deleteTargetUserName');
-  if (nameEl) nameEl.textContent = userName;
+  if (nameEl) nameEl.textContent = userObj ? userObj.full_name : '';
   const modal = document.getElementById('deleteUserModal');
   if (modal) modal.classList.remove('d-none');
 }
@@ -443,15 +444,7 @@ async function logout() {
   window.location.href = '/';
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// escapeHtml provided globally by global-loader.js
 
 // دالة ذكية لتنسيق رقم الواتساب ليعمل بسلاسة في مصر والأرقام الدولية
 function formatWhatsAppNumber(phone) {

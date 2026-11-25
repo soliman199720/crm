@@ -41,7 +41,7 @@ async function initDB() {
         project_interest VARCHAR(150),
         total_value NUMERIC(15, 2) DEFAULT 0,
         status VARCHAR(50) DEFAULT 'عميل جديد',
-        assigned_sales_id INT,
+        assigned_sales_id INT REFERENCES users(id) ON DELETE SET NULL,
         assigned_sales_name VARCHAR(100),
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
