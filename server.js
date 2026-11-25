@@ -12,7 +12,7 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' 
-  ? (() => { console.error('CRITICAL: JWT_SECRET environment variable is required in production!'); return 'crm_prod_fallback_' + Math.random(); })()
+  ? (() => { console.error('CRITICAL: JWT_SECRET environment variable is required in production!'); return crypto.randomBytes(64).toString('hex'); })()
   : 'crm_super_secure_vault_development_key_2026_x89');
 
 // ترويسات الأمان (Security Headers)
@@ -67,7 +67,7 @@ function requireOwner(req, res, next) {
 }
 
 // حارس التنقل بين الصفحات وحماية صفحات الأونر من موظفي السيلز
-function pageGuard(req, res, next) {
+async function pageGuard(req, res, next) {
   const p = req.path.toLowerCase();
   const isOwnerPage = ['/crm', '/crm.html', '/sales', '/sales.html', '/users', '/users.html', '/logs', '/logs.html'].includes(p);
   const isSharedAuthPage = ['/sales-portal', '/sales-portal.html'].includes(p) || p.startsWith('/projects') || p.startsWith('/project-details');
@@ -83,6 +83,11 @@ function pageGuard(req, res, next) {
 
   try {
     const user = jwt.verify(token, JWT_SECRET);
+    const userCheck = await pool.query('SELECT is_active FROM users WHERE id = $1', [user.id]);
+    if (userCheck.rows.length === 0 || userCheck.rows[0].is_active === false) {
+      res.clearCookie('crm_token');
+      return res.redirect('/');
+    }
     req.user = user;
 
     if (isOwnerPage) {
@@ -559,6 +564,8 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
       }
     }
 
+    const trimmedFullName = (typeof full_name === 'string' && full_name.trim()) ? full_name.trim() : null;
+
     if (password && password.trim() !== '') {
       const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(password.trim(), salt);
@@ -570,7 +577,7 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
         WHERE id = $4 
         RETURNING id, username, email, full_name, role
       `;
-      params = [full_name || null, newRole, hashedPassword, userId];
+      params = [trimmedFullName, newRole, hashedPassword, userId];
     } else {
       updateQuery = `
         UPDATE users 
@@ -579,7 +586,7 @@ app.put('/api/users/:id', authMiddleware, requireOwner, async (req, res) => {
         WHERE id = $3 
         RETURNING id, username, email, full_name, role
       `;
-      params = [full_name || null, newRole, userId];
+      params = [trimmedFullName, newRole, userId];
     }
 
     const result = await pool.query(updateQuery, params);
@@ -664,7 +671,8 @@ app.get('/api/sales-reps', authMiddleware, requireOwner, async (req, res) => {
         COUNT(c.id) AS assigned_count
       FROM users u
       LEFT JOIN clients c ON c.assigned_sales_id = u.id
-      WHERE u.role LIKE '%سيلز%' OR u.role LIKE '%Sales%'
+      WHERE (u.role LIKE '%سيلز%' OR u.role LIKE '%Sales%')
+        AND (u.is_active IS NULL OR u.is_active = TRUE)
       GROUP BY u.id, u.full_name, u.email, u.phone, u.role
       ORDER BY u.id ASC
     `;
@@ -787,10 +795,14 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
     let createdByName = req.user ? req.user.full_name : 'المدير العام';
 
     if (isOwner) {
-      if (assigned_sales_id) {
-        const salesQuery = await pool.query('SELECT full_name FROM users WHERE id = $1', [assigned_sales_id]);
+      const parsedAssignedId = parsePositiveInt(assigned_sales_id);
+      if (parsedAssignedId) {
+        const salesQuery = await pool.query(
+          'SELECT full_name FROM users WHERE id = $1 AND (is_active IS NULL OR is_active = TRUE)',
+          [parsedAssignedId]
+        );
         if (salesQuery.rows.length > 0) {
-          salesId = assigned_sales_id;
+          salesId = parsedAssignedId;
           salesName = salesQuery.rows[0].full_name;
           clientStatus = 'قيد المتابعة';
         }
@@ -889,7 +901,9 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
     let distributedInfo = '';
     // في حال تفعيل خيار التوزيع التلقائي الفوري
     if (auto_distribute === true) {
-      const salesQuery = await clientDb.query("SELECT id, full_name FROM users WHERE role LIKE '%سيلز%' OR role LIKE '%Sales%' ORDER BY id ASC");
+      const salesQuery = await clientDb.query(
+        "SELECT id, full_name FROM users WHERE (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE) ORDER BY id ASC"
+      );
       const salesTeam = salesQuery.rows;
 
       if (salesTeam.length > 0) {
@@ -1057,9 +1071,16 @@ app.put('/api/clients/:id/assign', authMiddleware, requireOwner, async (req, res
     let newSalesId = null;
 
     if (sales_id && sales_id !== 'unassigned') {
-      const salesQuery = await pool.query('SELECT id, full_name FROM users WHERE id = $1', [sales_id]);
+      const parsedSalesId = parsePositiveInt(sales_id);
+      if (!parsedSalesId) {
+        return res.status(400).json({ success: false, message: 'معرف مسؤول المبيعات غير صحيح' });
+      }
+      const salesQuery = await pool.query(
+        'SELECT id, full_name FROM users WHERE id = $1 AND (is_active IS NULL OR is_active = TRUE)',
+        [parsedSalesId]
+      );
       if (salesQuery.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'مسؤول المبيعات غير موجود' });
+        return res.status(404).json({ success: false, message: 'مسؤول المبيعات غير موجود أو معطل' });
       }
       newSalesId = salesQuery.rows[0].id;
       salesName = salesQuery.rows[0].full_name;
@@ -1113,7 +1134,9 @@ app.post('/api/clients/auto-distribute', authMiddleware, requireOwner, async (re
     await clientDb.query('BEGIN');
 
     // جلب فريق السيلز النشطين
-    const salesResult = await clientDb.query("SELECT id, full_name FROM users WHERE role LIKE '%سيلز%' OR role LIKE '%Sales%' ORDER BY id ASC");
+    const salesResult = await clientDb.query(
+      "SELECT id, full_name FROM users WHERE (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE) ORDER BY id ASC"
+    );
     const salesTeam = salesResult.rows;
 
     if (salesTeam.length === 0) {
@@ -1297,13 +1320,13 @@ app.post('/api/clients/bulk-assign', authMiddleware, requireOwner, async (req, r
       actionType: 'إسناد جماعي للعملاء',
       actionCategory: 'توزيع العملاء',
       targetType: 'عملاء',
-      targetName: `${client_ids.length} عميل`,
-      details: `تم إسناد مجموعة من ${client_ids.length} عملاء دفعة واحدة إلى مسؤول المبيعات (${salesName})`
+      targetName: `${validClientIds.length} عميل`,
+      details: `تم إسناد مجموعة من ${validClientIds.length} عملاء دفعة واحدة إلى مسؤول المبيعات (${salesName})`
     });
 
     res.json({
       success: true,
-      message: `تم إسناد ${client_ids.length} عملاء إلى ${salesName} بنجاح!`
+      message: `تم إسناد ${validClientIds.length} عملاء إلى ${salesName} بنجاح!`
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
@@ -1622,9 +1645,12 @@ app.post('/api/clients/:id/activities', authMiddleware, async (req, res) => {
 
     const newActivity = insertRes.rows[0];
 
-    // تحديث حالة العميل إذا تم تمريرها أو نقله تلقائياً لقيد المتابعة إن كان جديداً
+    // تحديث حالة العميل إذا تم تمريرها بشكل صالح أو نقله تلقائياً لقيد المتابعة إن كان جديداً
     let newStatus = client.status;
     if (update_client_status && update_client_status !== client.status) {
+      if (!ALLOWED_CLIENT_STATUSES.includes(update_client_status)) {
+        return res.status(400).json({ success: false, message: 'حالة العميل المطلوبة غير صالحة' });
+      }
       await pool.query('UPDATE clients SET status = $1 WHERE id = $2', [update_client_status, clientId]);
       newStatus = update_client_status;
     } else if (client.status === 'عميل جديد' || client.status === 'تم الإسناد') {
@@ -1773,8 +1799,11 @@ app.get('/api/audit-logs', authMiddleware, requireOwner, async (req, res) => {
     }
 
     if (user_id && user_id !== 'all') {
-      params.push(parseInt(user_id, 10));
-      query += ` AND user_id = $${params.length}`;
+      const parsedUserId = parsePositiveInt(user_id);
+      if (parsedUserId) {
+        params.push(parsedUserId);
+        query += ` AND user_id = $${params.length}`;
+      }
     }
 
     if (user_name && user_name.trim() !== '' && user_name !== 'all') {
@@ -2115,7 +2144,8 @@ app.put('/api/projects/:id', authMiddleware, async (req, res) => {
     }
 
     let finalImagesJson = current.images_json || '[]';
-    let finalImageUrl = image_url !== undefined ? image_url : (current.image_url || '');
+    const isSafeImageUrl = (u) => typeof u === 'string' && (u === '' || u.startsWith('/uploads/') || /^https?:\/\//i.test(u));
+    let finalImageUrl = (image_url !== undefined && isSafeImageUrl(image_url)) ? image_url : (current.image_url || '');
     if (existing_images !== undefined || (Array.isArray(images) && images.length > 0)) {
       const mergedUrls = await mergeAndSaveImages(
         existing_images,
@@ -2496,9 +2526,14 @@ app.put('/api/projects/:id/units/:unitId', authMiddleware, async (req, res) => {
       }
     }
 
-    const area = area_sqm !== undefined ? parseFloat(area_sqm) : current.area_sqm;
-    const mPrice = meter_price !== undefined ? parseFloat(meter_price) : current.meter_price;
-    const finalTotal = total_price !== undefined ? parseFloat(total_price) : (area * mPrice || current.total_price);
+    const parsedArea = area_sqm !== undefined ? parseFloat(area_sqm) : NaN;
+    const area = Number.isFinite(parsedArea) ? parsedArea : parseFloat(current.area_sqm) || 0;
+    const parsedMPrice = meter_price !== undefined ? parseFloat(meter_price) : NaN;
+    const mPrice = Number.isFinite(parsedMPrice) ? parsedMPrice : parseFloat(current.meter_price) || 0;
+    const parsedTotal = total_price !== undefined ? parseFloat(total_price) : NaN;
+    const finalTotal = Number.isFinite(parsedTotal)
+      ? parsedTotal
+      : ((area_sqm !== undefined || meter_price !== undefined) ? (area * mPrice) : (parseFloat(current.total_price) || 0));
 
     let finalUnitImagesJson = current.images_json || '[]';
     if (existing_images !== undefined || (Array.isArray(images) && images.length > 0)) {
@@ -2617,7 +2652,7 @@ app.delete('/api/audit-logs', authMiddleware, requireOwner, async (req, res) => 
 });
 
 // 9. إحصائيات عامة للأونر
-app.get('/api/owner-stats', authMiddleware, async (req, res) => {
+app.get('/api/owner-stats', authMiddleware, requireOwner, async (req, res) => {
   try {
     const [totalClients, unassignedClients, salesCount, totalValue] = await Promise.all([
       pool.query('SELECT COUNT(*) FROM clients'),
@@ -2649,6 +2684,7 @@ let chatListenClient = null;
 let chatPubSubReady = false;
 
 function deliverChatMessageToLocalClients(msg) {
+  const deadClientIds = [];
   chatSseClients.forEach(client => {
     try {
       // 1. إشعارات النظام ومسح الشات
@@ -2668,8 +2704,13 @@ function deliverChatMessageToLocalClients(msg) {
         // 3. المحادثات العامة (الجروب): تُبث لكافة أعضاء الفريق
         client.res.write(`data: ${JSON.stringify(msg)}\n\n`);
       }
-    } catch (e) {}
+    } catch (e) {
+      deadClientIds.push(client.id);
+    }
   });
+  if (deadClientIds.length > 0) {
+    chatSseClients = chatSseClients.filter(c => !deadClientIds.includes(c.id));
+  }
 }
 
 async function initChatPubSub() {
@@ -2846,9 +2887,12 @@ app.get('/api/chat/stream', authMiddleware, (req, res) => {
 // 2. جلب سجل الرسائل الأخيرة (جروب عام أو محادثة خاصة)
 app.get('/api/chat/messages', authMiddleware, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit, 10) || 150;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 150, 1), 500);
     const chatType = req.query.type || 'group';
-    const withUserId = req.query.withUserId ? parseInt(req.query.withUserId, 10) : null;
+    const withUserId = req.query.withUserId ? parsePositiveInt(req.query.withUserId) : null;
+    if (req.query.withUserId && !withUserId) {
+      return res.status(400).json({ success: false, message: 'معرف المستخدم غير صحيح' });
+    }
     const currentUserId = req.user.id;
 
     let result;
@@ -2921,7 +2965,10 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
 
     if (chat_type === 'private' && recipient_id) {
       targetChatType = 'private';
-      targetRecipientId = parseInt(recipient_id, 10);
+      targetRecipientId = parsePositiveInt(recipient_id);
+      if (!targetRecipientId) {
+        return res.status(400).json({ success: false, message: 'معرف المستلم غير صحيح' });
+      }
       
       const userRes = await pool.query('SELECT full_name FROM users WHERE id = $1', [targetRecipientId]);
       if (userRes.rows.length === 0) {
@@ -2979,13 +3026,17 @@ app.post('/api/chat/clear', authMiddleware, requireOwner, async (req, res) => {
       delRes = await pool.query("DELETE FROM chat_messages WHERE chat_type = 'group' OR recipient_id IS NULL RETURNING id");
       clearDesc = 'مسح محادثات الجروب العام للفريق';
     } else if (target === 'private' && with_user_id) {
+      const parsedWithUserId = parsePositiveInt(with_user_id);
+      if (!parsedWithUserId) {
+        return res.status(400).json({ success: false, message: 'معرف الموظف غير صحيح' });
+      }
       delRes = await pool.query(`
         DELETE FROM chat_messages 
         WHERE chat_type = 'private' 
           AND ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)) 
         RETURNING id
-      `, [req.user.id, parseInt(with_user_id, 10)]);
-      clearDesc = `مسح المحادثة الخاصة مع الموظف رقم (${with_user_id})`;
+      `, [req.user.id, parsedWithUserId]);
+      clearDesc = `مسح المحادثة الخاصة مع الموظف رقم (${parsedWithUserId})`;
     } else {
       delRes = await pool.query('DELETE FROM chat_messages RETURNING id');
       clearDesc = 'مسح وتصفير كافة محادثات النظام بالكامل (الجروب والخاص)';

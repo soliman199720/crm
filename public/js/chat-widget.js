@@ -274,8 +274,19 @@
         }
       };
 
-      sseSource.onerror = () => {
+      sseSource.onerror = async () => {
         const subtitle = document.getElementById('chatHeaderSubtitle');
+        try {
+          const authCheck = await fetch('/api/me');
+          if (authCheck.status === 401 || authCheck.status === 403) {
+            if (sseSource) {
+              sseSource.close();
+              sseSource = null;
+            }
+            if (subtitle) subtitle.textContent = 'انتهت الجلسة، يرجى تسجيل الدخول';
+            return;
+          }
+        } catch (_) {}
         if (subtitle) subtitle.textContent = 'إعادة الاتصال بالخادم...';
       };
     } catch (err) {

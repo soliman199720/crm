@@ -290,7 +290,8 @@ function createProjectCardHtml(p) {
   if ((!Array.isArray(projImages) || projImages.length === 0) && p.image_url) {
     projImages = [p.image_url];
   }
-  const coverUrl = Array.isArray(projImages) && projImages.length > 0 ? projImages[0] : '';
+  const rawCoverUrl = Array.isArray(projImages) && projImages.length > 0 ? projImages[0] : '';
+  const coverUrl = (typeof rawCoverUrl === 'string' && (rawCoverUrl.startsWith('/uploads/') || /^https?:\/\//i.test(rawCoverUrl))) ? rawCoverUrl : '';
 
   return `
     <div class="project-unified-card project-card-clickable" onclick="openProjectPage(${p.id})" title="اضغط لفتح صفحة المشروع">

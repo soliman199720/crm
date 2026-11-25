@@ -47,6 +47,7 @@ const filesToCopy = [
   'server.js',
   'db.js',
   'package.json',
+  'package-lock.json',
   '.env.example',
   'schema.sql',
   'start.sh',

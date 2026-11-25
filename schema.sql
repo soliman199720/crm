@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 6. جدول محاولات تسجيل الدخول الفاشلة (Cluster-safe Rate Limiting)
+CREATE TABLE IF NOT EXISTS login_attempts (
+  ip VARCHAR(45) PRIMARY KEY,
+  attempts INT NOT NULL DEFAULT 0,
+  first_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  blocked_until TIMESTAMP NULL
+);
+
 -- إنشاء فهارس لتحسين الأداء (Indexes for Performance)
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);

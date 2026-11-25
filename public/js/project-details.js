@@ -158,11 +158,15 @@ function renderProjectDetails(root, p) {
     images = [p.image_url];
   }
 
-  const galleryHtml = Array.isArray(images) && images.length > 0 ? `
+  const safeImages = Array.isArray(images)
+    ? images.filter(url => typeof url === 'string' && (url.startsWith('/uploads/') || /^https?:\/\//i.test(url)))
+    : [];
+
+  const galleryHtml = safeImages.length > 0 ? `
     <div class="details-gallery-section">
-      <h3><i class="fa-regular fa-images"></i> صور المشروع (${images.length})</h3>
+      <h3><i class="fa-regular fa-images"></i> صور المشروع (${safeImages.length})</h3>
       <div class="details-gallery-grid">
-        ${images.map((url, idx) => `
+        ${safeImages.map((url, idx) => `
           <div class="details-gallery-item" onclick="openImageLightbox('${escapeHtml(url)}')">
             <img src="${escapeHtml(url)}" alt="${escapeHtml(p.name)} - صورة ${idx + 1}" loading="lazy">
           </div>
