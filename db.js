@@ -127,6 +127,15 @@ async function initDB() {
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='chat_messages' AND column_name='chat_type') THEN
           ALTER TABLE chat_messages ADD COLUMN chat_type VARCHAR(20) DEFAULT 'group';
         END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='chat_messages' AND column_name='attachment_url') THEN
+          ALTER TABLE chat_messages ADD COLUMN attachment_url TEXT NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='chat_messages' AND column_name='attachment_name') THEN
+          ALTER TABLE chat_messages ADD COLUMN attachment_name VARCHAR(255) NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='chat_messages' AND column_name='attachment_type') THEN
+          ALTER TABLE chat_messages ADD COLUMN attachment_type VARCHAR(30) NULL;
+        END IF;
       END $$;
     `);
 

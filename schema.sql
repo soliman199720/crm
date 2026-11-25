@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   recipient_id INT NULL,
   recipient_name VARCHAR(100) NULL,
   chat_type VARCHAR(20) DEFAULT 'group',
+  attachment_url TEXT NULL,
+  attachment_name VARCHAR(255) NULL,
+  attachment_type VARCHAR(30) NULL,
   message TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

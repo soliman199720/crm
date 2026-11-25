@@ -36,8 +36,8 @@ app.use((req, res, next) => {
 });
 
 // Middlewares
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 app.use(cookieParser());
 
 // دالة مساعدة للتحقق من المعرفات الرقمية الصحيحة الموجبة
@@ -3153,11 +3153,12 @@ async function checkAndExecuteThursdayChatCleanup() {
 
     // 1. مسح أي رسائل قديمة سبقت آخر موعد مسح مجدول (إذا كان السيرفر متوقفاً وتم تشغيله لاحقاً)
     const delOld = await pool.query(
-      'DELETE FROM chat_messages WHERE created_at < $1 RETURNING id',
+      'DELETE FROM chat_messages WHERE created_at < $1 RETURNING id, attachment_url',
       [mostRecentMidnight]
     );
 
     if (delOld.rows.length > 0) {
+      await deleteChatAttachmentFiles(delOld.rows);
       console.log(`🧹 [تنظيف الشات الأسبوعي] تم مسح ${delOld.rows.length} رسالة قديمة سبقت موعد الخميس 12:00 ليلاً.`);
       broadcastChatMessage({
         type: 'chat_cleared',
@@ -3176,7 +3177,8 @@ async function checkAndExecuteThursdayChatCleanup() {
         lastThursdayMidnightClearedKey = weekClearKey;
 
         // مسح كافة الرسائل الحالية
-        const fullClear = await pool.query('DELETE FROM chat_messages RETURNING id');
+        const fullClear = await pool.query('DELETE FROM chat_messages RETURNING id, attachment_url');
+        await deleteChatAttachmentFiles(fullClear.rows);
         console.log(`🧹 [الجدولة الأسبوعية] تم مسح ${fullClear.rows.length} رسالة محادثة في موعد الخميس الساعة 12:00 ليلاً.`);
 
         // توثيق في سجل العمليات والرقابة (Audit Log)
@@ -3264,7 +3266,7 @@ app.get('/api/chat/messages', authMiddleware, async (req, res) => {
     if (chatType === 'private' && withUserId) {
       // محادثة خاصة بين المستخدم الحالي والشخص المحدد فقط
       result = await pool.query(`
-        SELECT id, sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, message, created_at
+        SELECT id, sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, attachment_url, attachment_name, attachment_type, message, created_at
         FROM chat_messages
         WHERE chat_type = 'private'
           AND ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1))
@@ -3274,7 +3276,7 @@ app.get('/api/chat/messages', authMiddleware, async (req, res) => {
     } else {
       // محادثة الجروب العام (الفريق بالكامل)
       result = await pool.query(`
-        SELECT id, sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, message, created_at
+        SELECT id, sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, attachment_url, attachment_name, attachment_type, message, created_at
         FROM chat_messages
         WHERE chat_type = 'group' OR recipient_id IS NULL
         ORDER BY id ASC
@@ -3312,14 +3314,96 @@ app.get('/api/chat/messages', authMiddleware, async (req, res) => {
   }
 });
 
-// 3. إرسال رسالة جديدة وحفظها في PostgreSQL وبثها لحظياً (جروب أو خاص)
+const MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB حد أقصى لمرفق الشات
+
+async function saveChatAttachmentToDisk(attachment) {
+  if (!attachment || typeof attachment !== 'object' || typeof attachment.dataUrl !== 'string') {
+    return null;
+  }
+  const match = attachment.dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) {
+    throw new Error('صيغة الملف المرفق غير صالحة');
+  }
+
+  const mime = match[1].toLowerCase();
+  const rawName = String(attachment.name || 'file').trim();
+  const safeOriginalName = path.basename(rawName).slice(0, 180) || 'attachment';
+  const extFromName = path.extname(safeOriginalName).toLowerCase().replace('.', '');
+
+  let ext = '';
+  let attachType = '';
+
+  if (mime.startsWith('image/')) {
+    const imgExt = mime.split('/')[1].toLowerCase();
+    if (!['png', 'jpeg', 'jpg', 'webp', 'gif'].includes(imgExt)) {
+      throw new Error('صيغة الصورة غير مدعومة (المسموح: PNG, JPG, WEBP, GIF)');
+    }
+    ext = imgExt === 'jpeg' ? 'jpg' : imgExt;
+    attachType = 'image';
+  } else if (mime === 'application/pdf' || extFromName === 'pdf') {
+    ext = 'pdf';
+    attachType = 'pdf';
+  } else if (
+    ['xlsx', 'xls', 'csv'].includes(extFromName) ||
+    mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mime === 'application/vnd.ms-excel' ||
+    mime === 'text/csv' ||
+    mime === 'application/csv'
+  ) {
+    ext = ['xlsx', 'xls', 'csv'].includes(extFromName) ? extFromName : 'xlsx';
+    attachType = 'excel';
+  } else {
+    throw new Error('نوع الملف غير مدعوم. المسموح: الصور، PDF، أو ملفات الإكسيل');
+  }
+
+  const buffer = Buffer.from(match[2], 'base64');
+  if (buffer.length === 0 || buffer.length > MAX_CHAT_ATTACHMENT_BYTES) {
+    throw new Error('حجم الملف يتجاوز الحد الأقصى المسموح (10 ميجابايت)');
+  }
+
+  const uploadDir = path.join(__dirname, 'public', 'uploads', 'chat');
+  await fs.promises.mkdir(uploadDir, { recursive: true });
+  const filename = `chat_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  await fs.promises.writeFile(path.join(uploadDir, filename), buffer);
+
+  return {
+    url: `/uploads/chat/${filename}`,
+    name: safeOriginalName,
+    type: attachType
+  };
+}
+
+async function deleteChatAttachmentFiles(rows) {
+  if (!Array.isArray(rows)) return;
+  for (const row of rows) {
+    const url = row && row.attachment_url;
+    if (typeof url === 'string' && url.startsWith('/uploads/chat/')) {
+      const fullPath = path.join(__dirname, 'public', url);
+      try {
+        await fs.promises.unlink(fullPath);
+      } catch (_) {}
+    }
+  }
+}
+
+// 3. إرسال رسالة جديدة وحفظها في PostgreSQL وبثها لحظياً (جروب أو خاص، مع دعم الصور والملفات)
 app.post('/api/chat/messages', authMiddleware, async (req, res) => {
-  const { message, chat_type, recipient_id } = req.body;
-  if (!message || message.trim() === '') {
-    return res.status(400).json({ success: false, message: 'لا يمكن إرسال رسالة فارغة' });
+  const { message, chat_type, recipient_id, attachment } = req.body;
+  const trimmedMsg = typeof message === 'string' ? message.trim() : '';
+  if (!trimmedMsg && !attachment) {
+    return res.status(400).json({ success: false, message: 'لا يمكن إرسال رسالة فارغة بدون نص أو مرفق' });
   }
 
   try {
+    let savedAttachment = null;
+    if (attachment) {
+      try {
+        savedAttachment = await saveChatAttachmentToDisk(attachment);
+      } catch (attErr) {
+        return res.status(400).json({ success: false, message: attErr.message || 'تعذر رفع المرفق' });
+      }
+    }
+
     const senderId = req.user.id;
     const senderName = req.user.full_name || req.user.fullName || (isUserOwner(req.user) ? 'المدير العام' : 'سيلز');
     const senderRole = req.user.role || 'سيلز (Sales)';
@@ -3343,10 +3427,21 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
     }
 
     const result = await pool.query(`
-      INSERT INTO chat_messages (sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, message)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id, sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, message, created_at
-    `, [senderId, senderName, senderRole, targetRecipientId, targetRecipientName, targetChatType, message.trim()]);
+      INSERT INTO chat_messages (sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, attachment_url, attachment_name, attachment_type, message)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id, sender_id, sender_name, sender_role, recipient_id, recipient_name, chat_type, attachment_url, attachment_name, attachment_type, message, created_at
+    `, [
+      senderId,
+      senderName,
+      senderRole,
+      targetRecipientId,
+      targetRecipientName,
+      targetChatType,
+      savedAttachment ? savedAttachment.url : null,
+      savedAttachment ? savedAttachment.name : null,
+      savedAttachment ? savedAttachment.type : null,
+      trimmedMsg
+    ]);
 
     const savedMsg = result.rows[0];
 
@@ -3388,7 +3483,7 @@ app.post('/api/chat/clear', authMiddleware, requireOwner, async (req, res) => {
     let clearDesc = '';
 
     if (target === 'group') {
-      delRes = await pool.query("DELETE FROM chat_messages WHERE chat_type = 'group' OR recipient_id IS NULL RETURNING id");
+      delRes = await pool.query("DELETE FROM chat_messages WHERE chat_type = 'group' OR recipient_id IS NULL RETURNING id, attachment_url");
       clearDesc = 'مسح محادثات الجروب العام للفريق';
     } else if (target === 'private' && with_user_id) {
       const parsedWithUserId = parsePositiveInt(with_user_id);
@@ -3399,13 +3494,14 @@ app.post('/api/chat/clear', authMiddleware, requireOwner, async (req, res) => {
         DELETE FROM chat_messages 
         WHERE chat_type = 'private' 
           AND ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)) 
-        RETURNING id
+        RETURNING id, attachment_url
       `, [req.user.id, parsedWithUserId]);
       clearDesc = `مسح المحادثة الخاصة مع الموظف رقم (${parsedWithUserId})`;
     } else {
-      delRes = await pool.query('DELETE FROM chat_messages RETURNING id');
+      delRes = await pool.query('DELETE FROM chat_messages RETURNING id, attachment_url');
       clearDesc = 'مسح وتصفير كافة محادثات النظام بالكامل (الجروب والخاص)';
     }
+    await deleteChatAttachmentFiles(delRes.rows);
     
     await logActivity({
       req,

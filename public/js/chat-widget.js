@@ -25,6 +25,7 @@
   // مؤشرات القوائم المنبثقة
   let isMembersPanelOpen = false;
   let isSettingsPanelOpen = false;
+  let pendingChatAttachment = null;
 
   document.addEventListener('DOMContentLoaded', () => {
     initChatWidget();
@@ -152,8 +153,15 @@
           </button>
         </div>
 
+        <!-- معاينة المرفق المختار قبل الإرسال -->
+        <div id="chatAttachmentPreview" class="d-none" style="display:none;padding:8px 12px;background:#f8fafc;border-top:1px solid #e2e8f0;align-items:center;justify-content:space-between;gap:8px;font-size:0.82rem;"></div>
+
         <!-- شريط الإدخال في الأسفل -->
         <form class="chat-widget-footer" onsubmit="handleSendChatMessage(event)">
+          <input type="file" id="chatFileInput" accept="image/*,.pdf,.xlsx,.xls,.csv" style="display:none;" onchange="handleChatFileSelected(event)">
+          <button type="button" id="chatAttachBtn" onclick="document.getElementById('chatFileInput').click()" title="إرفاق صورة أو ملف PDF / Excel" style="border:none;background:#f1f5f9;color:#475569;width:38px;height:38px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="fa-solid fa-paperclip"></i>
+          </button>
           <div class="chat-input-wrapper">
             <input 
               type="text" 
@@ -453,9 +461,43 @@
       `;
     }
 
+    let attachmentHtml = '';
+    if (msg.attachment_url && typeof msg.attachment_url === 'string' && msg.attachment_url.startsWith('/uploads/chat/')) {
+      const safeUrl = escapeHtml(msg.attachment_url);
+      const safeName = escapeHtml(msg.attachment_name || 'ملف مرفق');
+      if (msg.attachment_type === 'image') {
+        attachmentHtml = `
+          <div style="margin-bottom:6px;">
+            <a href="${safeUrl}" target="_blank" rel="noopener" title="فتح الصورة بحجم كامل">
+              <img src="${safeUrl}" alt="${safeName}" loading="lazy" style="max-width:220px;max-height:220px;border-radius:10px;display:block;object-fit:cover;border:1px solid rgba(0,0,0,0.08);">
+            </a>
+            <a href="${safeUrl}" download="${safeName}" style="display:inline-flex;align-items:center;gap:5px;margin-top:5px;font-size:0.75rem;font-weight:700;color:inherit;opacity:0.9;text-decoration:none;background:rgba(0,0,0,0.08);padding:3px 9px;border-radius:8px;">
+              <i class="fa-solid fa-download"></i> حفظ الصورة
+            </a>
+          </div>
+        `;
+      } else {
+        const isPdf = msg.attachment_type === 'pdf';
+        const fileIcon = isPdf ? 'fa-file-pdf' : 'fa-file-excel';
+        const iconColor = isPdf ? '#dc2626' : '#16a34a';
+        attachmentHtml = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(255,255,255,0.88);color:#0f172a;padding:8px 10px;border-radius:10px;margin-bottom:6px;border:1px solid rgba(15,23,42,0.1);">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <i class="fa-solid ${fileIcon}" style="font-size:1.3rem;color:${iconColor};flex-shrink:0;"></i>
+              <span style="font-size:0.82rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;" title="${safeName}">${safeName}</span>
+            </div>
+            <a href="${safeUrl}" download="${safeName}" style="padding:4px 10px;border-radius:8px;background:#0f172a;color:#ffffff;font-size:0.74rem;font-weight:700;text-decoration:none;flex-shrink:0;">
+              <i class="fa-solid fa-download"></i> تحميل
+            </a>
+          </div>
+        `;
+      }
+    }
+
     bubble.innerHTML = `
       ${senderLabel}
-      <div class="chat-bubble-text">${escapeHtml(msg.message)}</div>
+      ${attachmentHtml}
+      ${msg.message ? `<div class="chat-bubble-text">${escapeHtml(msg.message)}</div>` : ''}
       <div class="chat-bubble-meta">
         <span>${timeStr}</span>
         ${isMe ? '<i class="fa-solid fa-check-double" title="تم الإرسال"></i>' : ''}
@@ -465,6 +507,62 @@
     return bubble;
   }
 
+  // 7.1 اختيار ومعاينة مرفق الشات (صورة / PDF / Excel)
+  window.handleChatFileSelected = function (e) {
+    const file = e.target && e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      showChatNotice('الحد الأقصى لحجم الملف هو 10 ميجابايت');
+      e.target.value = '';
+      return;
+    }
+
+    const lowerName = file.name.toLowerCase();
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf' || lowerName.endsWith('.pdf');
+    const isExcel = /\.(xlsx|xls|csv)$/i.test(lowerName) ||
+      file.type.includes('spreadsheet') ||
+      file.type.includes('excel') ||
+      file.type === 'text/csv';
+
+    if (!isImage && !isPdf && !isExcel) {
+      showChatNotice('الصيغ المسموحة فقط: الصور، PDF، أو ملفات الإكسيل');
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      pendingChatAttachment = { name: file.name, dataUrl: reader.result };
+      const preview = document.getElementById('chatAttachmentPreview');
+      if (preview) {
+        preview.classList.remove('d-none');
+        preview.style.display = 'flex';
+        preview.innerHTML = `
+          <span style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#0f172a;font-weight:700;">
+            <i class="fa-solid ${isImage ? 'fa-image text-emerald' : (isPdf ? 'fa-file-pdf' : 'fa-file-excel')}" style="color:${isImage ? '#10b981' : (isPdf ? '#dc2626' : '#16a34a')};"></i>
+            <span>${escapeHtml(file.name)}</span>
+          </span>
+          <button type="button" onclick="clearChatAttachment()" style="border:none;background:#fee2e2;color:#b91c1c;width:24px;height:24px;border-radius:6px;cursor:pointer;font-weight:800;">&times;</button>
+        `;
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  window.clearChatAttachment = function () {
+    pendingChatAttachment = null;
+    const preview = document.getElementById('chatAttachmentPreview');
+    if (preview) {
+      preview.classList.add('d-none');
+      preview.style.display = 'none';
+      preview.innerHTML = '';
+    }
+  };
+
   // 8. إرسال رسالة جديدة
   window.handleSendChatMessage = async function (e) {
     if (e) e.preventDefault();
@@ -472,18 +570,21 @@
     const input = document.getElementById('chatInputField');
     const sendBtn = document.getElementById('chatSendBtn');
     const message = (input.value || '').trim();
+    const attachmentToSend = pendingChatAttachment;
 
-    if (!message) return;
+    if (!message && !attachmentToSend) return;
 
     input.value = '';
     input.focus();
+    clearChatAttachment();
     sendBtn.disabled = true;
 
     try {
       const payload = {
         message,
         chat_type: currentChat.type,
-        recipient_id: currentChat.type === 'private' ? currentChat.user.id : null
+        recipient_id: currentChat.type === 'private' ? currentChat.user.id : null,
+        attachment: attachmentToSend || null
       };
 
       const res = await fetch('/api/chat/messages', {

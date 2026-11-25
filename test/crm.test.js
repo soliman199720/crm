@@ -94,3 +94,10 @@ test('Batch archive reactivation endpoint is defined in server.js', () => {
   assert.equal(serverCode.includes("app.post('/api/sales-portal/archive/reactivate-batch', authMiddleware"), true);
   assert.equal(serverCode.includes('archived_at'), true);
 });
+
+test('Chat attachment upload and cleanup are implemented in server.js', () => {
+  const serverCode = fs.readFileSync(path.join(rootDir, 'server.js'), 'utf8');
+  assert.equal(serverCode.includes('saveChatAttachmentToDisk'), true);
+  assert.equal(serverCode.includes('deleteChatAttachmentFiles'), true);
+  assert.equal(serverCode.includes('attachment_url'), true);
+});
