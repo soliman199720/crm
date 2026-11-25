@@ -794,7 +794,8 @@ app.get('/api/clients', authMiddleware, async (req, res) => {
           c.created_at,
           c.postponed_until,
           c.postpone_reason,
-          c.is_reminder_resolved
+          c.is_reminder_resolved,
+          c.archived_at
         FROM clients c
         LEFT JOIN users u ON u.id = c.assigned_sales_id
         ORDER BY 
@@ -821,7 +822,8 @@ app.get('/api/clients', authMiddleware, async (req, res) => {
           c.created_at,
           c.postponed_until,
           c.postpone_reason,
-          c.is_reminder_resolved
+          c.is_reminder_resolved,
+          c.archived_at
         FROM clients c
         WHERE c.assigned_sales_id = $1
         ORDER BY c.id DESC
@@ -917,7 +919,8 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
            SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5,
                total_value = $6, assigned_sales_id = $7, assigned_sales_name = $8,
                created_by_id = $9, created_by_name = $10, notes = $11, status = $12,
-               postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE
+               postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE,
+               archived_at = NULL
            WHERE id = $13
            RETURNING *`,
           [
@@ -1095,7 +1098,8 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
            SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5,
                total_value = $6, notes = $7, status = 'عميل جديد',
                assigned_sales_id = NULL, assigned_sales_name = NULL,
-               postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE
+               postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE,
+               archived_at = NULL
            WHERE id = $8`,
           [
             match.incoming.name,
@@ -1585,6 +1589,11 @@ app.put('/api/clients/:id/status', authMiddleware, async (req, res) => {
     }
 
     let updateQuery = `UPDATE clients SET status = $1`;
+    if (ARCHIVED_CLIENT_STATUSES.includes(status)) {
+      updateQuery += `, archived_at = NOW()`;
+    } else {
+      updateQuery += `, archived_at = NULL`;
+    }
     if (status !== 'مؤجل') {
       updateQuery += `, is_reminder_resolved = true`;
     }
@@ -1708,6 +1717,102 @@ app.get('/api/sales-portal/reminders', authMiddleware, async (req, res) => {
     const dueCount = reminders.filter(r => r.is_due).length;
     res.json({ success: true, reminders, due_count: dueCount });
   } catch (err) {
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
+  }
+});
+
+// 8.4.1 إعادة تنشيط دفعة من عملاء الأرشيف حسب الفترة والتصنيف وإعادتهم للإدارة كعملاء جدد
+app.post('/api/sales-portal/archive/reactivate-batch', authMiddleware, async (req, res) => {
+  const { period = 'all', category = 'all' } = req.body || {};
+
+  const periodIntervals = {
+    '1m': "1 month",
+    '3m': "3 months",
+    '6m': "6 months",
+    '1y': "1 year"
+  };
+
+  if (period !== 'all' && !periodIntervals[period]) {
+    return res.status(400).json({ success: false, message: 'الفترة الزمنية المحددة غير صالحة' });
+  }
+  if (!['won', 'lost', 'all'].includes(category)) {
+    return res.status(400).json({ success: false, message: 'تصنيف الأرشيف المحدد غير صالح' });
+  }
+
+  try {
+    const conditions = [];
+    const params = [];
+
+    if (category === 'won') {
+      conditions.push("status = 'تم التعاقد'");
+    } else if (category === 'lost') {
+      conditions.push("status = 'ملغي'");
+    } else {
+      conditions.push("status IN ('تم التعاقد', 'ملغي')");
+    }
+
+    if (!isUserOwner(req.user)) {
+      params.push(req.user.id);
+      conditions.push(`assigned_sales_id = $${params.length}`);
+    }
+
+    if (period !== 'all') {
+      params.push(periodIntervals[period]);
+      conditions.push(`COALESCE(archived_at, created_at) <= NOW() - ($${params.length})::interval`);
+    }
+
+    const updateRes = await pool.query(
+      `UPDATE clients
+       SET status = 'عميل جديد',
+           assigned_sales_id = NULL,
+           assigned_sales_name = NULL,
+           archived_at = NULL,
+           postponed_until = NULL,
+           postpone_reason = '',
+           is_reminder_resolved = FALSE
+       WHERE ${conditions.join(' AND ')}
+       RETURNING id, name`,
+      params
+    );
+
+    const reactivatedCount = updateRes.rows.length;
+    if (reactivatedCount === 0) {
+      return res.json({
+        success: true,
+        reactivatedCount: 0,
+        message: 'لا يوجد عملاء مؤرشفون مطابقون للفترة والتصنيف المحددين حالياً'
+      });
+    }
+
+    const periodLabels = {
+      'all': 'جميع الفترات',
+      '1m': 'منذ شهر فأكثر',
+      '3m': 'منذ 3 شهور فأكثر',
+      '6m': 'منذ 6 شهور فأكثر',
+      '1y': 'منذ سنة فأكثر'
+    };
+    const catLabels = {
+      'won': 'تم التعاقد',
+      'lost': 'ملغي / غير مهتم',
+      'all': 'جميع المؤرشفين'
+    };
+
+    await logActivity({
+      req,
+      actionType: 'إعادة تنشيط أرشيف وإرساله للإدارة',
+      actionCategory: 'متابعة السيلز',
+      targetType: 'أرشيف العملاء',
+      targetName: `${reactivatedCount} عميل`,
+      details: `قام (${req.user.full_name || 'مسؤول السيلز'}) بإعادة تنشيط (${reactivatedCount}) عميل من أرشيف [${catLabels[category]}] (${periodLabels[period]}) وإعادتهم إلى صفحة الإدارة كعملاء جدد غير مسندين`
+    });
+
+    res.json({
+      success: true,
+      reactivatedCount,
+      message: `تمت إعادة تنشيط (${reactivatedCount}) عميل وإرجاعهم إلى صفحة الإدارة (عميل جديد) بنجاح!`
+    });
+  } catch (err) {
+    console.error('خطأ إعادة تنشيط الأرشيف:', err);
     res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
@@ -1879,10 +1984,14 @@ app.post('/api/clients/:id/activities', authMiddleware, async (req, res) => {
       if (!ALLOWED_CLIENT_STATUSES.includes(update_client_status)) {
         return res.status(400).json({ success: false, message: 'حالة العميل المطلوبة غير صالحة' });
       }
-      await pool.query('UPDATE clients SET status = $1 WHERE id = $2', [update_client_status, clientId]);
+      const isArch = ARCHIVED_CLIENT_STATUSES.includes(update_client_status);
+      await pool.query(
+        `UPDATE clients SET status = $1, archived_at = ${isArch ? 'NOW()' : 'NULL'} WHERE id = $2`,
+        [update_client_status, clientId]
+      );
       newStatus = update_client_status;
     } else if (client.status === 'عميل جديد' || client.status === 'تم الإسناد') {
-      await pool.query("UPDATE clients SET status = 'قيد المتابعة' WHERE id = $1", [clientId]);
+      await pool.query("UPDATE clients SET status = 'قيد المتابعة', archived_at = NULL WHERE id = $1", [clientId]);
       newStatus = 'قيد المتابعة';
     }
 

@@ -59,7 +59,10 @@ async function initDB() {
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_reminder_resolved BOOLEAN DEFAULT FALSE;`);
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by_id INT;`);
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by_name VARCHAR(100);`);
+    await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_clients_archived_at ON clients(archived_at);`);
+    await client.query(`UPDATE clients SET archived_at = COALESCE(created_at, NOW()) WHERE status IN ('تم التعاقد', 'ملغي') AND archived_at IS NULL;`);
 
     // 3. جدول سجل العمليات والرقابة (Audit Activity Logs)
     await client.query(`

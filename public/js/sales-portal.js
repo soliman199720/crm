@@ -21,6 +21,7 @@ let infiniteObserver = null;
 
 let currentPortalView = 'active'; // 'active' | 'archive'
 let currentArchiveCategory = 'won'; // 'won' | 'lost' | 'all'
+let currentArchivePeriod = 'all'; // 'all' | '1m' | '3m' | '6m' | '1y'
 
 document.addEventListener('DOMContentLoaded', async () => {
   displayCurrentDate();
@@ -318,6 +319,9 @@ function filterClients(resetPage = false) {
       if (currentArchiveCategory === 'lost' && c.status !== 'ملغي') {
         return false;
       }
+      if (!isClientMatchingArchivePeriod(c, currentArchivePeriod)) {
+        return false;
+      }
     }
 
     // 2. فحص نص البحث
@@ -341,6 +345,116 @@ function filterClients(resetPage = false) {
   });
 
   renderDealsPipeline();
+  updateBatchArchiveToolbar();
+}
+
+function isClientMatchingArchivePeriod(client, period) {
+  if (!period || period === 'all') return true;
+  const dateVal = client.archived_at || client.created_at;
+  if (!dateVal) return false;
+  const archivedDate = new Date(dateVal);
+  if (isNaN(archivedDate.getTime())) return false;
+
+  const cutoff = new Date();
+  if (period === '1m') cutoff.setMonth(cutoff.getMonth() - 1);
+  else if (period === '3m') cutoff.setMonth(cutoff.getMonth() - 3);
+  else if (period === '6m') cutoff.setMonth(cutoff.getMonth() - 6);
+  else if (period === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
+  return archivedDate <= cutoff;
+}
+
+function updateBatchArchiveToolbar() {
+  const toolbar = document.getElementById('archiveBatchToolbar');
+  const countEl = document.getElementById('archiveBatchMatchCount');
+  const btn = document.getElementById('btnBatchReactivateArchive');
+  if (!toolbar) return;
+
+  if (currentPortalView !== 'archive') {
+    toolbar.classList.add('d-none');
+    toolbar.style.display = 'none';
+    return;
+  }
+
+  toolbar.classList.remove('d-none');
+  toolbar.style.display = 'flex';
+  const count = filteredClients.length;
+  if (countEl) countEl.textContent = count;
+  if (btn) {
+    btn.disabled = count === 0;
+    btn.style.opacity = count === 0 ? '0.55' : '1';
+    btn.style.cursor = count === 0 ? 'not-allowed' : 'pointer';
+  }
+}
+
+function onArchivePeriodChange(period) {
+  currentArchivePeriod = period || 'all';
+  filterClients(true);
+}
+
+async function handleBatchReactivateArchive() {
+  const count = filteredClients.length;
+  if (count === 0) {
+    showToast('لا يوجد عملاء مؤرشفون مطابقون لهذه الفترة', 'info');
+    return;
+  }
+
+  const periodLabels = {
+    all: 'جميع الفترات',
+    '1m': 'منذ شهر فأكثر',
+    '3m': 'منذ 3 شهور فأكثر',
+    '6m': 'منذ 6 شهور فأكثر',
+    '1y': 'منذ سنة فأكثر'
+  };
+  const catLabels = {
+    won: 'تم التعاقد',
+    lost: 'ملغي / غير مهتم',
+    all: 'جميع المؤرشفين'
+  };
+
+  const confirmed = await window.showCrmConfirmDialog({
+    title: 'تأكيد إعادة تنشيط الدفعة',
+    message:
+      `سيتم إعادة تنشيط (${count}) عميل من أرشيف [${catLabels[currentArchiveCategory] || 'الكل'}]\n` +
+      `الفترة: (${periodLabels[currentArchivePeriod] || 'الكل'})\n\n` +
+      `سيتم تحويلهم إلى حالة (عميل جديد) وإرجاعهم مباشرة إلى صفحة الإدارة (/sales) لإعادة التوزيع.`,
+    confirmText: `تأكيد إعادة تنشيط (${count}) عميل`,
+    cancelText: 'إلغاء'
+  });
+
+  if (!confirmed) return;
+
+  const btn = document.getElementById('btnBatchReactivateArchive');
+  const origHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري إعادة التنشيط...';
+  }
+
+  try {
+    const res = await fetch('/api/sales-portal/archive/reactivate-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        period: currentArchivePeriod,
+        category: currentArchiveCategory
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(data.message || 'تمت إعادة التنشيط وإرسال العملاء للإدارة بنجاح', 'success');
+      await loadPortalData();
+    } else {
+      showToast(data.message || 'تعذر إعادة تنشيط الدفعة', 'error');
+    }
+  } catch (err) {
+    showToast('حدث خطأ في الاتصال بالخادم', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+      updateBatchArchiveToolbar();
+    }
+  }
 }
 
 // مسح حقل البحث
