@@ -890,10 +890,10 @@ function createArchiveDealCardHtml(client) {
             <span>${escapeHtml(client.phone || 'بدون هاتف')}</span>
           </a>
           ${cleanPhone ? `
-            <a href="${waLink}" target="_blank" class="deal-btn-action deal-btn-whatsapp" title="فتح محادثة واتساب فورية">
+            <button type="button" class="deal-btn-action deal-btn-whatsapp" onclick="openWhatsAppTemplatesModal(${client.id})" title="اختيار رسالة واتساب جاهزة وإرسالها">
               <i class="fa-brands fa-whatsapp"></i>
               <span>واتساب</span>
-            </a>
+            </button>
           ` : ''}
           ${client.phone ? `
             <a href="tel:${escapeHtml(client.phone)}" class="deal-btn-action deal-btn-call" title="إجراء اتصال هاتفي">
@@ -1041,10 +1041,10 @@ function createActiveDealCardHtml(client) {
             <span>${escapeHtml(client.phone || 'بدون هاتف')}</span>
           </a>
           ${cleanPhone ? `
-            <a href="${waLink}" target="_blank" class="deal-btn-action deal-btn-whatsapp" title="فتح محادثة واتساب فورية">
+            <button type="button" class="deal-btn-action deal-btn-whatsapp" onclick="openWhatsAppTemplatesModal(${client.id})" title="اختيار رسالة واتساب جاهزة وإرسالها">
               <i class="fa-brands fa-whatsapp"></i>
               <span>واتساب</span>
-            </a>
+            </button>
           ` : ''}
           ${client.phone ? `
             <a href="tel:${escapeHtml(client.phone)}" class="deal-btn-action deal-btn-call" title="إجراء اتصال هاتفي">
@@ -1642,9 +1642,9 @@ async function checkDueReminders() {
 
           <div class="reminder-actions-row">
             ${cleanPhone ? `
-              <a href="${waLink}" target="_blank" class="btn-reminder-act wa" title="محادثة واتساب">
+              <button type="button" class="btn-reminder-act wa" onclick="openWhatsAppTemplatesModal(${r.id}, 'مؤجل')" title="اختيار رسالة واتساب جاهزة">
                 <i class="fa-brands fa-whatsapp"></i> واتساب
-              </a>
+              </button>
             ` : ''}
             ${r.phone ? `
               <a href="tel:${escapeHtml(r.phone)}" class="btn-reminder-act call" title="اتصال هاتفي">
@@ -2002,3 +2002,204 @@ async function handlePortalCreateClient(e) {
 }
 
 
+
+// ========================================================
+//   قوالب رسائل الواتساب بالمصرية حسب مرحلة العميل (5 رسائل لكل مرحلة)
+// ========================================================
+const WHATSAPP_STAGE_TEMPLATES = {
+  new: {
+    label: 'عميل جديد / تم الإسناد',
+    messages: [
+      'أهلاً بحضرتك يا أستاذ {name} 🌟 معاك {sales} من إدارة المبيعات. شوفت إن حضرتك مهتم بـ ({project})، حابب أتواصل معاك في الوقت المناسب ليك عشان أوضح لحضرتك كل التفاصيل والأسعار المتاحة.',
+      'مساء الخير يا أستاذ {name} 👋 معاك {sales}. بخصوص استفسار حضرتك عن ({project})، عندنا حالياً وحدات مميزة جداً وأنظمة سداد مرنة. تحب نكلم حضرتك امتى النهارده؟',
+      'السلام عليكم أستاذ {name} 🤝 معاك {sales} مستشارك العقاري. حبيت أرحب بحضرتك وأبعتلك تفاصيل ومميزات ({project}) على السريع، ولو حابب نحدد مكالمة قصيرة 5 دقايق تحت أمرك.',
+      'أهلاً يا فندم أستاذ {name} ✨ معاك {sales}. وصلنا طلب حضرتك بخصوص ({project})، ممكن أعرف المساحة أو الميزانية اللي بتدور عليها عشان أرشح لحضرتك أنسب اختيارات عندنا؟',
+      'تحياتي لحضرتك يا أستاذ {name} 📞 معاك {sales} من فريق المبيعات. حاولت أتواصل معاك بخصوص ({project})، أول ما تكون فاضي ابعتلي رسالة أو قولي الميعاد المناسب وأنا هكلمك فوراً.'
+    ]
+  },
+  progress: {
+    label: 'قيد المتابعة والتفاوض',
+    messages: [
+      'أهلاً بحضرتك تاني يا أستاذ {name} 👋 معاك {sales}. حبيت أطمن وصلت لإيه في العرض اللي اتكلمنا فيه بخصوص ({project})؟ ولو في أي نقطة حابب نوضحها أو نظبطها معاك أنا جاهز.',
+      'مساء الخير يا أستاذ {name} ✨ معاك {sales}. في تحديث جديد ممتاز بخصوص ({project}) وعروض تقسيط هتناسب حضرتك جداً، تحب أبعتلك تفاصيلها ولا نتكلم فون؟',
+      'السلام عليكم أستاذ {name} 🤝 معاك {sales}. إيه رأي حضرتك نحدد ميعاد معاينة على الطبيعة لـ ({project}) الأسبوع ده عشان تشوف الموقع والتشطيب بنفسك قبل ما تاخد قرارك؟',
+      'أهلاً يا أستاذ {name} 📄 معاك {sales}. جهزت لحضرتك مقارنة بسيطة بين أفضل الوحدات المتاحة حالياً في ({project}) من حيث السعر والمساحة، تحب أبعتهالك دلوقتي؟',
+      'تحياتي لحضرتك يا أستاذ {name} ⏳ معاك {sales}. حبيت أفكر حضرتك إن الوحدات المميزة في ({project}) الإقبال عليها عالي الفترة دي، فلو نويت نحجز ميعاد أو نكمل الخطوة الجاية قولي وأنا معاك.'
+    ]
+  },
+  delayed: {
+    label: 'مؤجل / اتصال لاحق',
+    messages: [
+      'أهلاً بحضرتك يا أستاذ {name} 😊 معاك {sales}. بناءً على الميعاد اللي اتفقنا عليه قبل كده، حبيت أسأل لو وقت حضرتك يسمح نكمل كلامنا بخصوص ({project})؟',
+      'مساء الخير يا أستاذ {name} 🌟 معاك {sales}. عدّى وقت على آخر مكالمة لينا بخصوص ({project})، حبيت أطمن عليك وأعرف لو ظروفك دلوقتي مناسبة نرجع نرتب الاختيارات من جديد.',
+      'السلام عليكم أستاذ {name} 👋 معاك {sales}. نزلت عندنا أسعار وعروض جديدة في ({project}) ممكن تكون أنسب ليك دلوقتي، حبيت أبلغك بيها أول بأول.',
+      'أهلاً يا فندم أستاذ {name} 🤝 معاك {sales}. ميعاد المتابعة اللي حضرتك حددته جه، قولّي تحب أكلمك النهارده الساعة كام ولا نأجلها ليوم تاني يناسبك؟',
+      'تحياتي لحضرتك أستاذ {name} ✨ معاك {sales}. مش حابب أزعجك، بس حبيت أسيبلك رسالة تذكير لطيفة إننا جاهزين في أي وقت لو حبيت تشوف الجديد في ({project}).'
+    ]
+  },
+  contracted: {
+    label: 'تم التعاقد والنجاح 🏆',
+    messages: [
+      'ألف مبروك يا أستاذ {name} 🎉 معاك {sales}. مبسوطين جداً بتعاقد حضرتك معانا في ({project})، ونتمنى لك كل التوفيق والبركة فيها، وأنا معاك لأي استفسار في أي وقت.',
+      'مساء الخير يا أستاذ {name} 🏆 معاك {sales}. حبيت أطمن على حضرتك بعد إتمام التعاقد في ({project}) وأتأكد إن كل الإجراءات والأوراق ماشية معاك تمام وبكل سلاسة.',
+      'تحياتي لحضرتك يا أستاذ {name} 🌟 معاك {sales}. شكراً على ثقتك الغالية فينا وفي ({project})، ولو في أي حد من معارفك بيدور على وحدة مميزة هنشرف جداً بخدمته زي حضرتك.',
+      'أهلاً بحضرتك يا أستاذ {name} 🤝 معاك {sales}. حبيت أتابع معاك لو في أي استفسار بخصوص مواعيد الأقساط أو الاستلام في ({project})، تحت أمرك دايماً.',
+      'السلام عليكم أستاذ {name} ✨ معاك {sales}. بنفكرك دايماً إن خدمة ما بعد البيع موجودة لراحتك في أي وقت بخصوص وحدتك في ({project})، نهارك سعيد!'
+    ]
+  },
+  lost: {
+    label: 'ملغي / غير مهتم',
+    messages: [
+      'أهلاً بحضرتك يا أستاذ {name} 😊 معاك {sales}. عارف إن العرض اللي فات في ({project}) مكنش أنسب حاجة وقتها، بس حبيت أبلغك إن عندنا حالياً بدائل بأسعار ومساحات مختلفة ممكن تعجبك.',
+      'مساء الخير يا أستاذ {name} 👋 معاك {sales}. حبيت أسلم عليك وأعرف لو خططك اتغيرت الفترة دي وبقيت بتدور تاني على فرصة كويسة في ({project}) أو غيره.',
+      'السلام عليكم أستاذ {name} ✨ معاك {sales}. نزل عندنا مؤخراً أنظمة سداد مريحة ومقدمات أقل بكتير من قبل كده، فقلت أشاركك المعلومة يمكن تناسبك المرة دي.',
+      'تحياتي لحضرتك يا أستاذ {name} 🤝 معاك {sales}. رأيك يهمنا جداً، لو في حاجة معينة كانت سبب إننا مكملناش في ({project}) ياريت تقولي عشان نقدر نوفرلك اللي يناسبك مستقبلاً.',
+      'أهلاً يا فندم أستاذ {name} 🌟 معاك {sales}. رقمي مع حضرتك في أي وقت لو احتجت أي استشارة عقارية أو حبيت تسأل عن أسعار السوق الحالية، بالتوفيق دايماً!'
+    ]
+  }
+};
+
+function getWhatsAppStageKey(status) {
+  if (status === 'قيد المتابعة') return 'progress';
+  if (status === 'مؤجل') return 'delayed';
+  if (status === 'تم التعاقد') return 'contracted';
+  if (status === 'ملغي') return 'lost';
+  return 'new';
+}
+
+function formatWhatsAppTemplateText(template, client) {
+  const senderName = currentSalesUser
+    ? (currentSalesUser.full_name || currentSalesUser.fullName || getFriendlyName(currentSalesUser))
+    : 'مسؤول المبيعات';
+  const clientName = (client && client.name) ? client.name.trim() : 'فندم';
+  const project = (client && client.project_interest) ? client.project_interest.trim() : 'مشروعاتنا';
+  return template
+    .replace(/\{name\}/g, clientName)
+    .replace(/\{project\}/g, project)
+    .replace(/\{sales\}/g, senderName);
+}
+
+function openWhatsAppTemplatesModal(clientId, overrideStatus) {
+  let client = allClients.find(c => c.id === clientId);
+  if (!client && Array.isArray(activeRemindersList)) {
+    client = activeRemindersList.find(r => r.id === clientId);
+  }
+  if (!client) return;
+
+  const cleanPhone = formatWhatsAppNumber(client.phone);
+  if (!cleanPhone) {
+    showToast('رقم هاتف العميل غير صالح لفتح واتساب', 'error');
+    return;
+  }
+
+  const stageKey = getWhatsAppStageKey(overrideStatus || client.status);
+  const stageConfig = WHATSAPP_STAGE_TEMPLATES[stageKey] || WHATSAPP_STAGE_TEMPLATES.new;
+  const formattedMessages = stageConfig.messages.map(tpl => formatWhatsAppTemplateText(tpl, client));
+
+  const existing = document.getElementById('whatsappTemplatesOverlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'whatsappTemplatesOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(4px);z-index:10060;display:flex;align-items:center;justify-content:center;padding:16px;direction:rtl;font-family:Cairo,sans-serif;';
+
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#ffffff;border-radius:18px;max-width:620px;width:100%;max-height:90vh;overflow-y:auto;padding:22px;box-shadow:0 24px 48px rgba(15,23,42,0.3);border:1px solid #e2e8f0;';
+
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding-bottom:12px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:42px;height:42px;border-radius:12px;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;font-size:1.35rem;">
+          <i class="fa-brands fa-whatsapp"></i>
+        </div>
+        <div>
+          <h3 style="margin:0;font-size:1.08rem;font-weight:800;color:#0f172a;">رسائل واتساب جاهزة — ${escapeHtml(client.name || 'العميل')}</h3>
+          <small style="color:#64748b;">المرحلة: <strong style="color:#0f172a;">${escapeHtml(stageConfig.label)}</strong> &bull; ${escapeHtml(client.phone || '')}</small>
+        </div>
+      </div>
+      <button type="button" id="closeWaTemplatesBtn" style="border:none;background:#f1f5f9;color:#475569;width:34px;height:34px;border-radius:10px;font-size:1.2rem;cursor:pointer;">&times;</button>
+    </div>
+
+    <div id="waTemplatesList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;"></div>
+
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px;">
+      <label style="display:block;font-size:0.85rem;font-weight:700;color:#334155;margin-bottom:6px;">
+        <i class="fa-solid fa-pen"></i> معاينة وتعديل الرسالة قبل الإرسال:
+      </label>
+      <textarea id="waCustomMessageBox" rows="3" style="width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid #cbd5e1;font-family:inherit;font-size:0.92rem;line-height:1.6;resize:vertical;"></textarea>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;">
+        <button type="button" id="cancelWaSendBtn" style="padding:9px 18px;border-radius:10px;border:1px solid #cbd5e1;background:#ffffff;color:#475569;font-family:inherit;font-weight:700;cursor:pointer;">إغلاق</button>
+        <button type="button" id="sendWaCustomBtn" style="padding:9px 20px;border-radius:10px;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#ffffff;font-family:inherit;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(22,163,74,0.3);">
+          <i class="fa-brands fa-whatsapp"></i>
+          <span>إرسال عبر واتساب</span>
+        </button>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const listEl = card.querySelector('#waTemplatesList');
+  const textarea = card.querySelector('#waCustomMessageBox');
+  textarea.value = formattedMessages[0] || '';
+
+  formattedMessages.forEach((msgText, idx) => {
+    const item = document.createElement('div');
+    item.style.cssText = 'border:1px solid #e2e8f0;border-radius:12px;padding:12px;background:#ffffff;display:flex;flex-direction:column;gap:8px;transition:border-color 0.2s;';
+
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+    const badge = document.createElement('span');
+    badge.style.cssText = 'font-size:0.78rem;font-weight:800;color:#15803d;background:#dcfce7;padding:3px 10px;border-radius:999px;';
+    badge.textContent = `رسالة ${idx + 1}`;
+
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:6px;';
+
+    const editPickBtn = document.createElement('button');
+    editPickBtn.type = 'button';
+    editPickBtn.textContent = 'تعديل';
+    editPickBtn.style.cssText = 'padding:5px 10px;border-radius:8px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;font-family:inherit;font-size:0.78rem;font-weight:700;cursor:pointer;';
+    editPickBtn.onclick = () => {
+      textarea.value = msgText;
+      textarea.focus();
+    };
+
+    const quickSendBtn = document.createElement('button');
+    quickSendBtn.type = 'button';
+    quickSendBtn.innerHTML = '<i class="fa-brands fa-whatsapp"></i> إرسال مباشرة';
+    quickSendBtn.style.cssText = 'padding:5px 12px;border-radius:8px;border:none;background:#16a34a;color:#ffffff;font-family:inherit;font-size:0.78rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:5px;';
+    quickSendBtn.onclick = () => {
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msgText)}`, '_blank', 'noopener');
+      overlay.remove();
+    };
+
+    btns.appendChild(editPickBtn);
+    btns.appendChild(quickSendBtn);
+    top.appendChild(badge);
+    top.appendChild(btns);
+
+    const p = document.createElement('p');
+    p.style.cssText = 'margin:0;font-size:0.9rem;line-height:1.65;color:#1e293b;';
+    p.textContent = msgText;
+
+    item.appendChild(top);
+    item.appendChild(p);
+    listEl.appendChild(item);
+  });
+
+  const closeFn = () => overlay.remove();
+  card.querySelector('#closeWaTemplatesBtn').onclick = closeFn;
+  card.querySelector('#cancelWaSendBtn').onclick = closeFn;
+  overlay.onclick = (e) => { if (e.target === overlay) closeFn(); };
+  card.querySelector('#sendWaCustomBtn').onclick = () => {
+    const finalMsg = (textarea.value || '').trim();
+    if (!finalMsg) {
+      showToast('يرجى كتابة نص الرسالة أولاً', 'error');
+      return;
+    }
+    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(finalMsg)}`, '_blank', 'noopener');
+    closeFn();
+  };
+}
