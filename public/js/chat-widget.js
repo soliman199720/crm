@@ -599,6 +599,7 @@
       }
     } catch (err) {
       console.error('خطأ إرسال الرسالة:', err);
+      showChatNotice('تعذر إرسال الرسالة أو حجم المرفق كبير جداً');
     } finally {
       sendBtn.disabled = false;
     }
