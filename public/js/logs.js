@@ -87,6 +87,11 @@ async function verifySession() {
     }
 
     const user = data.user;
+    const role = user.role || '';
+    if (!role.includes('Owner') && !role.includes('المالك')) {
+      window.location.replace('/sales-portal');
+      return;
+    }
     document.getElementById('ownerNameDisplay').textContent = user.fullName || 'المدير العام';
     document.getElementById('ownerEmailDisplay').textContent = user.email || '';
 

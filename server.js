@@ -102,7 +102,7 @@ function requireOwner(req, res, next) {
 
 // حارس التنقل بين الصفحات وحماية صفحات الأونر من موظفي السيلز
 async function pageGuard(req, res, next) {
-  const p = req.path.toLowerCase();
+  const p = req.path.toLowerCase().replace(/\/+$/, '') || '/';
   const isOwnerPage = ['/crm', '/crm.html', '/sales', '/sales.html', '/users', '/users.html', '/logs', '/logs.html'].includes(p);
   const isSharedAuthPage = ['/sales-portal', '/sales-portal.html'].includes(p) || p.startsWith('/projects') || p.startsWith('/project-details');
 
@@ -117,11 +117,12 @@ async function pageGuard(req, res, next) {
 
   try {
     const user = jwt.verify(token, JWT_SECRET);
-    const userCheck = await pool.query('SELECT is_active FROM users WHERE id = $1', [user.id]);
+    const userCheck = await pool.query('SELECT role, is_active FROM users WHERE id = $1', [user.id]);
     if (userCheck.rows.length === 0 || userCheck.rows[0].is_active === false) {
       res.clearCookie('crm_token');
       return res.redirect('/');
     }
+    user.role = userCheck.rows[0].role;
     req.user = user;
 
     if (isOwnerPage) {
@@ -157,11 +158,12 @@ async function authMiddleware(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
 
-    // فحص ما إذا كان الحساب نشطاً في قاعدة البيانات
-    const userCheck = await pool.query('SELECT is_active FROM users WHERE id = $1', [decoded.id]);
+    // فحص ما إذا كان الحساب نشطاً ومزامنة دوره الحالي من قاعدة البيانات
+    const userCheck = await pool.query('SELECT role, is_active FROM users WHERE id = $1', [decoded.id]);
     if (userCheck.rows.length === 0 || userCheck.rows[0].is_active === false) {
       return res.status(403).json({ success: false, message: 'تم تعطيل هذا الحساب أو أنه لم يعد موجوداً، يرجى مراجعة الإدارة' });
     }
+    req.user.role = userCheck.rows[0].role;
 
     next();
   } catch (err) {
