@@ -1404,15 +1404,7 @@ function getStatusClass(status) {
   return 'status-assigned';
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// escapeHtml provided globally by global-loader.js
 
 /* ========================================================
    نظام سجل المتابعات التفاعلي الزمني للعميل (Lead Interaction Timeline) للأونر

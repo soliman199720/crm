@@ -1204,16 +1204,7 @@ function showToast(message, type = 'success') {
   }, 3500);
 }
 
-// دوال مساعدة لمنع ثغرات XSS
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// دوال مساعدة لمنع ثغرات XSS (escapeHtml provided globally by global-loader.js)
 
 // توليد لون تدرج لوني فخم وفريد لكل عميل بناءً على اسمه (Monogram Avatar Color)
 function getMonogramColor(name) {

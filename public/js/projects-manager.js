@@ -6,6 +6,18 @@
 
 let allLoadedProjects = [];
 let pendingDeleteId = null;
+let selectedProjectImages = [];
+let editingProjectId = null;
+let currentUserIsOwner = false;
+
+// إعدادات التحميل التدريجي (Infinite Scroll - 20 مشروعاً لكل دفعة)
+const PROJECTS_CHUNK_SIZE = 20;
+let currentFilteredProjects = [];
+let currentVisibleProjectsLimit = PROJECTS_CHUNK_SIZE;
+let projectsInfiniteObserver = null;
+let isLoadingMoreProjects = false;
+let searchDebounceTimer = null;
+let currentProjectsFetchController = null;
 
 // تحديد التصنيف الحالي بناءً على مسار الصفحة
 function getCurrentCategory() {
@@ -38,6 +50,22 @@ document.addEventListener('DOMContentLoaded', () => {
 async function initProjectsPage() {
   const container = document.querySelector('.projects-hub-container') || document.querySelector('.projects-subpage-container');
   if (!container) return;
+
+  // التحقق من دور المستخدم الحالي (أونر أم سيلز) لضبط رابط العودة وصلاحية الحذف
+  try {
+    const meRes = await fetch('/api/me');
+    if (meRes.ok) {
+      const meData = await meRes.json();
+      const role = meData.user?.role || '';
+      currentUserIsOwner = role.includes('Owner') || role.includes('المالك');
+      if (!currentUserIsOwner) {
+        document.querySelectorAll('a[href="/crm"]').forEach(link => {
+          link.setAttribute('href', '/sales-portal');
+          link.setAttribute('title', 'العودة لبوابة السيلز');
+        });
+      }
+    }
+  } catch (_) {}
 
   const currentCat = getCurrentCategory();
 
@@ -99,8 +127,8 @@ function injectModals() {
               <i class="fa-solid fa-folder-plus"></i>
             </div>
             <div>
-              <h3 style="margin:0; font-size:1.15rem; font-weight:800; color:#0f172a;">إضافة مشروع جديد</h3>
-              <small style="color:#64748b;">أدخل تفاصيل المشروع وسيتم توجيهه لقسمه تلقائياً</small>
+              <h3 id="addProjectModalTitle" style="margin:0; font-size:1.15rem; font-weight:800; color:#0f172a;">إضافة مشروع جديد</h3>
+              <small id="addProjectModalSubtitle" style="color:#64748b;">أدخل تفاصيل المشروع وسيتم توجيهه لقسمه تلقائياً</small>
             </div>
           </div>
           <button class="btn-close" onclick="closeAddProjectModal()">&times;</button>
@@ -137,9 +165,23 @@ function injectModals() {
           </div>
 
           <!-- 5. التفاصيل -->
-          <div class="form-group" style="margin-bottom: 18px;">
+          <div class="form-group" style="margin-bottom: 14px;">
             <label style="font-weight:700; color:#0f172a; margin-bottom:6px; display:block;">5. التفاصيل والملاحظات</label>
             <textarea id="projDescInput" class="custom-form-textarea" rows="3" placeholder="مواصفات المشروع، أنظمة السداد، الخدمات المتاحة، الملاحظات الإدارية..."></textarea>
+          </div>
+
+          <!-- 6. صور المشروع (رفع متعدد من الجهاز أو الموبايل) -->
+          <div class="form-group" style="margin-bottom: 18px;">
+            <label style="font-weight:700; color:#0f172a; margin-bottom:6px; display:block;">6. صور المشروع (اختياري - يمكنك اختيار أكثر من صورة)</label>
+            <input type="file" id="projImagesInput" accept="image/*" multiple style="display:none;" onchange="handleProjectImagesSelected(event)">
+            <div class="proj-upload-dropzone" onclick="document.getElementById('projImagesInput').click()">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+              <div>
+                <strong>اضغط هنا لاختيار صور من الكمبيوتر أو الموبايل</strong>
+                <small>يمكنك تحديد أكثر من صورة معاً (JPG, PNG, WEBP)</small>
+              </div>
+            </div>
+            <div id="projImagesPreviewGrid" class="proj-images-preview-grid"></div>
           </div>
 
           <div class="modal-footer" style="display:flex; justify-content:flex-end; gap: 10px; padding-top:14px; border-top: 1px solid #f1f5f9;">
@@ -182,29 +224,43 @@ function injectModals() {
   document.body.insertAdjacentHTML('beforeend', modalsHtml);
 }
 
-// 3. جلب المشروعات من الخادم
-async function loadProjects() {
+// 3. جلب المشروعات من الخادم (مع دعم البحث المباشر في قاعدة البيانات)
+async function loadProjects(searchQuery) {
   const currentCat = getCurrentCategory();
   const grid = document.getElementById('projectsGrid');
   const countPill = document.getElementById('projectsCountPill');
 
-  try {
-    const url = currentCat === 'all' 
-      ? '/api/projects?category=all' 
-      : `/api/projects?category=${currentCat}`;
+  const effectiveSearch = typeof searchQuery === 'string'
+    ? searchQuery.trim()
+    : (document.getElementById('projectSearchInput')?.value || '').trim();
 
-    const res = await fetch(url);
+  if (currentProjectsFetchController) {
+    currentProjectsFetchController.abort();
+  }
+  currentProjectsFetchController = new AbortController();
+
+  try {
+    const queryParams = new URLSearchParams();
+    queryParams.set('category', currentCat === 'all' ? 'all' : currentCat);
+    if (effectiveSearch) {
+      queryParams.set('search', effectiveSearch);
+    }
+
+    const res = await fetch(`/api/projects?${queryParams.toString()}`, {
+      signal: currentProjectsFetchController.signal
+    });
     if (!res.ok) throw new Error('فشل جلب المشروعات');
 
     const data = await res.json();
     if (data.success) {
       allLoadedProjects = data.projects || [];
       if (countPill) countPill.textContent = `${allLoadedProjects.length} مشروع`;
-      renderProjects(allLoadedProjects);
+      renderProjects(allLoadedProjects, effectiveSearch);
     } else {
       if (grid) grid.innerHTML = `<div class="projects-error-state">${escapeHtml(data.message)}</div>`;
     }
   } catch (err) {
+    if (err.name === 'AbortError') return;
     if (grid) {
       grid.innerHTML = `
         <div class="projects-error-state">
@@ -217,14 +273,119 @@ async function loadProjects() {
   }
 }
 
-// 4. عرض كروت المشروعات
-function renderProjects(projects) {
+// بناء كارت المشروع الواحد
+function createProjectCardHtml(p) {
+  const catLabel = getCategoryLabel(p.category);
+  const badgeClass = getCategoryBadgeClass(p.category);
+  const area = parseFloat(p.area_sqm) || 0;
+
+  let catIcon = 'fa-building';
+  if (p.category === 'residential') catIcon = 'fa-house-chimney';
+  if (p.category === 'lands') catIcon = 'fa-mountain-city';
+
+  let projImages = [];
+  try {
+    projImages = JSON.parse(p.images_json || '[]');
+  } catch (_) {}
+  if ((!Array.isArray(projImages) || projImages.length === 0) && p.image_url) {
+    projImages = [p.image_url];
+  }
+  const coverUrl = Array.isArray(projImages) && projImages.length > 0 ? projImages[0] : '';
+
+  return `
+    <div class="project-unified-card project-card-clickable" onclick="openProjectPage(${p.id})" title="اضغط لفتح صفحة المشروع">
+      ${coverUrl ? `
+        <div class="project-card-cover">
+          <img src="${escapeHtml(coverUrl)}" alt="${escapeHtml(p.name)}" loading="lazy">
+          ${projImages.length > 1 ? `<span class="project-card-photos-count"><i class="fa-regular fa-images"></i> ${projImages.length} صور</span>` : ''}
+        </div>
+      ` : ''}
+      <div class="card-top-header">
+        <span class="project-cat-badge ${badgeClass}">
+          <i class="fa-solid ${catIcon}"></i> ${catLabel}
+        </span>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="btn-icon-edit-card" onclick="event.stopPropagation(); openEditProjectModal(${p.id})" title="تعديل المشروع">
+            <i class="fa-solid fa-pen-to-square"></i>
+          </button>
+          ${currentUserIsOwner ? `
+            <button class="btn-icon-del-card" onclick="event.stopPropagation(); promptDeleteProject(${p.id})" title="حذف المشروع">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          ` : ''}
+        </div>
+      </div>
+
+      <div class="card-main-info">
+        <h3 class="project-card-title">${escapeHtml(p.name)}</h3>
+
+        <div class="project-meta-row">
+          <div class="meta-item">
+            <i class="fa-solid fa-ruler-combined"></i>
+            <span>المساحة: <strong>${area.toLocaleString('en-US')} م²</strong></span>
+          </div>
+          <div class="meta-item">
+            <i class="fa-solid fa-location-dot"></i>
+            <span>${escapeHtml(p.location || 'الموقع غير محدد')}</span>
+          </div>
+        </div>
+
+        ${p.description ? `
+          <div class="project-desc-box">
+            <i class="fa-regular fa-comment-dots"></i>
+            <p>${escapeHtml(p.description)}</p>
+          </div>
+        ` : `
+          <div class="project-desc-box empty-desc">
+            <p>لا توجد تفاصيل إضافية مسجلة.</p>
+          </div>
+        `}
+      </div>
+
+      <div class="card-footer-meta">
+        <small><i class="fa-regular fa-calendar"></i> أُضيف: ${new Date(p.created_at).toLocaleDateString('ar-EG')}</small>
+        <span class="card-open-hint">فتح الصفحة <i class="fa-solid fa-arrow-left"></i></span>
+      </div>
+    </div>
+  `;
+}
+
+// 4. عرض كروت المشروعات (20 مشروعاً في البداية + تحميل الباقي أثناء التمرير)
+function renderProjects(projects, searchTerm = '') {
   const grid = document.getElementById('projectsGrid');
   if (!grid) return;
 
-  const currentCat = getCurrentCategory();
+  if (projectsInfiniteObserver) {
+    projectsInfiniteObserver.disconnect();
+    projectsInfiniteObserver = null;
+  }
 
-  if (!projects || projects.length === 0) {
+  const currentCat = getCurrentCategory();
+  currentFilteredProjects = Array.isArray(projects) ? projects : [];
+  currentVisibleProjectsLimit = PROJECTS_CHUNK_SIZE;
+  isLoadingMoreProjects = false;
+
+  const existingSentinel = document.getElementById('projectsInfiniteSentinel');
+  if (existingSentinel) existingSentinel.remove();
+
+  if (currentFilteredProjects.length === 0) {
+    if (searchTerm) {
+      grid.innerHTML = `
+        <div class="projects-empty-state">
+          <div class="empty-icon-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+          </div>
+          <h3>لا توجد نتائج مطابقة لـ "${escapeHtml(searchTerm)}"</h3>
+          <p>جرّب البحث باسم مشروع آخر أو موقع أو نوع مختلف.</p>
+          <button class="btn-retry" onclick="clearProjectsSearch()">
+            <i class="fa-solid fa-rotate-left"></i>
+            <span>عرض كافة المشروعات</span>
+          </button>
+        </div>
+      `;
+      return;
+    }
+
     grid.innerHTML = `
       <div class="projects-empty-state">
         <div class="empty-icon-wrap">
@@ -241,66 +402,90 @@ function renderProjects(projects) {
     return;
   }
 
-  grid.innerHTML = projects.map(p => {
-    const catLabel = getCategoryLabel(p.category);
-    const badgeClass = getCategoryBadgeClass(p.category);
-    const area = parseFloat(p.area_sqm) || 0;
+  const initialBatch = currentFilteredProjects.slice(0, currentVisibleProjectsLimit);
+  currentVisibleProjectsLimit = initialBatch.length;
+  grid.innerHTML = initialBatch.map(createProjectCardHtml).join('');
 
-    let catIcon = 'fa-building';
-    if (p.category === 'residential') catIcon = 'fa-house-chimney';
-    if (p.category === 'lands') catIcon = 'fa-mountain-city';
-
-    return `
-      <div class="project-unified-card">
-        <div class="card-top-header">
-          <span class="project-cat-badge ${badgeClass}">
-            <i class="fa-solid ${catIcon}"></i> ${catLabel}
-          </span>
-          <button class="btn-icon-del-card" onclick="promptDeleteProject(${p.id}, '${escapeHtml(p.name)}')" title="حذف المشروع">
-            <i class="fa-solid fa-trash-can"></i>
-          </button>
-        </div>
-
-        <div class="card-main-info">
-          <h3 class="project-card-title">${escapeHtml(p.name)}</h3>
-
-          <div class="project-meta-row">
-            <div class="meta-item">
-              <i class="fa-solid fa-ruler-combined"></i>
-              <span>المساحة: <strong>${area.toLocaleString('en-US')} م²</strong></span>
-            </div>
-            <div class="meta-item">
-              <i class="fa-solid fa-location-dot"></i>
-              <span>${escapeHtml(p.location || 'الموقع غير محدد')}</span>
-            </div>
-          </div>
-
-          ${p.description ? `
-            <div class="project-desc-box">
-              <i class="fa-regular fa-comment-dots"></i>
-              <p>${escapeHtml(p.description)}</p>
-            </div>
-          ` : `
-            <div class="project-desc-box empty-desc">
-              <p>لا توجد تفاصيل إضافية مسجلة.</p>
-            </div>
-          `}
-        </div>
-
-        <div class="card-footer-meta">
-          <small><i class="fa-regular fa-calendar"></i> أُضيف: ${new Date(p.created_at).toLocaleDateString('ar-EG')}</small>
-          <span class="card-status-pill">نشط</span>
-        </div>
-      </div>
-    `;
-  }).join('');
+  if (currentVisibleProjectsLimit < currentFilteredProjects.length) {
+    const sentinel = document.createElement('div');
+    sentinel.id = 'projectsInfiniteSentinel';
+    sentinel.style.cssText = 'text-align:center; padding:18px; color:#64748b; font-size:0.9rem; font-weight:600;';
+    sentinel.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري تحميل المزيد من المشروعات...';
+    grid.insertAdjacentElement('afterend', sentinel);
+    setupProjectsInfiniteScroll(sentinel);
+  }
 }
 
-// 5. فتح وإغلاق نافذة الإضافة
+function loadMoreProjectsChunk() {
+  if (isLoadingMoreProjects) return;
+  if (currentVisibleProjectsLimit >= currentFilteredProjects.length) return;
+
+  const grid = document.getElementById('projectsGrid');
+  const sentinel = document.getElementById('projectsInfiniteSentinel');
+  if (!grid) return;
+
+  isLoadingMoreProjects = true;
+  const nextBatch = currentFilteredProjects.slice(
+    currentVisibleProjectsLimit,
+    currentVisibleProjectsLimit + PROJECTS_CHUNK_SIZE
+  );
+  currentVisibleProjectsLimit += nextBatch.length;
+
+  if (nextBatch.length > 0) {
+    grid.insertAdjacentHTML('beforeend', nextBatch.map(createProjectCardHtml).join(''));
+  }
+
+  if (currentVisibleProjectsLimit >= currentFilteredProjects.length) {
+    if (projectsInfiniteObserver) {
+      projectsInfiniteObserver.disconnect();
+      projectsInfiniteObserver = null;
+    }
+    if (sentinel) sentinel.remove();
+  }
+
+  isLoadingMoreProjects = false;
+}
+
+function setupProjectsInfiniteScroll(sentinel) {
+  if (!sentinel) return;
+  if (!('IntersectionObserver' in window)) {
+    // متصفحات قديمة: عرض الباقي مباشرة
+    while (currentVisibleProjectsLimit < currentFilteredProjects.length) {
+      loadMoreProjectsChunk();
+    }
+    return;
+  }
+
+  projectsInfiniteObserver = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) {
+      loadMoreProjectsChunk();
+    }
+  }, { rootMargin: '250px' });
+
+  projectsInfiniteObserver.observe(sentinel);
+}
+
+function openProjectPage(projectId) {
+  if (!projectId) return;
+  window.location.href = `/projects/${projectId}`;
+}
+
+// 5. فتح وإغلاق نافذة الإضافة والتعديل
 function openAddProjectModal() {
   const modal = document.getElementById('addProjectModal');
   const form = document.getElementById('addProjectForm');
   if (form) form.reset();
+
+  editingProjectId = null;
+  selectedProjectImages = [];
+  renderSelectedProjectImages();
+
+  const titleEl = document.getElementById('addProjectModalTitle');
+  const subEl = document.getElementById('addProjectModalSubtitle');
+  const btnEl = document.getElementById('btnSubmitProject');
+  if (titleEl) titleEl.textContent = 'إضافة مشروع جديد';
+  if (subEl) subEl.textContent = 'أدخل تفاصيل المشروع وسيتم توجيهه لقسمه تلقائياً';
+  if (btnEl) btnEl.innerHTML = `<i class="fa-solid fa-check"></i><span>حفظ المشروع وتوجيهه</span>`;
 
   // ضبط نوع المشروع الافتراضي حسب الصفحة المفتوحة
   const currentCat = getCurrentCategory();
@@ -312,9 +497,119 @@ function openAddProjectModal() {
   if (modal) modal.classList.remove('d-none');
 }
 
+function openEditProjectModal(projectId) {
+  const project = allLoadedProjects.find(p => p.id === projectId);
+  if (!project) return;
+
+  const modal = document.getElementById('addProjectModal');
+  const form = document.getElementById('addProjectForm');
+  if (form) form.reset();
+
+  editingProjectId = projectId;
+
+  document.getElementById('projCategoryInput').value = project.category || 'commercial';
+  document.getElementById('projNameInput').value = project.name || '';
+  document.getElementById('projAreaInput').value = project.area_sqm || '';
+  document.getElementById('projLocationInput').value = project.location || '';
+  document.getElementById('projDescInput').value = project.description || '';
+
+  let existingUrls = [];
+  try { existingUrls = JSON.parse(project.images_json || '[]'); } catch (_) {}
+  if ((!Array.isArray(existingUrls) || existingUrls.length === 0) && project.image_url) {
+    existingUrls = [project.image_url];
+  }
+  selectedProjectImages = (Array.isArray(existingUrls) ? existingUrls : []).map(url => ({
+    url,
+    dataUrl: url,
+    isExisting: true
+  }));
+  renderSelectedProjectImages();
+
+  const titleEl = document.getElementById('addProjectModalTitle');
+  const subEl = document.getElementById('addProjectModalSubtitle');
+  const btnEl = document.getElementById('btnSubmitProject');
+  if (titleEl) titleEl.textContent = 'تعديل بيانات المشروع';
+  if (subEl) subEl.textContent = `تحديث بيانات وصور (${project.name})`;
+  if (btnEl) btnEl.innerHTML = `<i class="fa-solid fa-floppy-disk"></i><span>حفظ التعديلات</span>`;
+
+  if (modal) modal.classList.remove('d-none');
+}
+
 function closeAddProjectModal() {
+  editingProjectId = null;
   const modal = document.getElementById('addProjectModal');
   if (modal) modal.classList.add('d-none');
+}
+
+// معالجة وضغط الصور المختارة من الجهاز أو الموبايل
+function compressImageFile(file, maxSize = 1400, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round((height * maxSize) / width);
+            width = maxSize;
+          } else {
+            width = Math.round((width * maxSize) / height);
+            height = maxSize;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        resolve(canvas.toDataURL(outputType, quality));
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleProjectImagesSelected(event) {
+  const files = Array.from(event.target.files || []);
+  if (files.length === 0) return;
+
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    try {
+      const dataUrl = await compressImageFile(file);
+      selectedProjectImages.push({ name: file.name, dataUrl });
+    } catch (_) {}
+  }
+
+  event.target.value = '';
+  renderSelectedProjectImages();
+}
+
+function removeSelectedProjectImage(index) {
+  selectedProjectImages.splice(index, 1);
+  renderSelectedProjectImages();
+}
+
+function renderSelectedProjectImages() {
+  const grid = document.getElementById('projImagesPreviewGrid');
+  if (!grid) return;
+
+  if (selectedProjectImages.length === 0) {
+    grid.innerHTML = '';
+    return;
+  }
+
+  grid.innerHTML = selectedProjectImages.map((img, idx) => `
+    <div class="proj-preview-thumb">
+      <img src="${img.dataUrl}" alt="صورة ${idx + 1}">
+      <button type="button" class="btn-remove-preview" onclick="removeSelectedProjectImage(${idx})" title="إزالة الصورة">&times;</button>
+    </div>
+  `).join('');
 }
 
 // 6. حفظ المشروع الجديد وتوجيهه تلقائياً
@@ -334,23 +629,38 @@ async function handleSaveProject(event) {
   const location = document.getElementById('projLocationInput')?.value.trim();
   const description = document.getElementById('projDescInput')?.value.trim();
 
+  const isEdit = Boolean(editingProjectId);
+  const url = isEdit ? `/api/projects/${editingProjectId}` : '/api/projects';
+  const method = isEdit ? 'PUT' : 'POST';
+
+  const bodyPayload = {
+    category,
+    name,
+    area_sqm,
+    location,
+    description,
+    images: selectedProjectImages.filter(img => !img.isExisting).map(img => img.dataUrl)
+  };
+  if (isEdit) {
+    bodyPayload.existing_images = selectedProjectImages.filter(img => img.isExisting).map(img => img.url);
+  }
+
   try {
-    const res = await fetch('/api/projects', {
-      method: 'POST',
+    const res = await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        category,
-        name,
-        area_sqm,
-        location,
-        description
-      })
+      body: JSON.stringify(bodyPayload)
     });
 
     const data = await res.json();
     if (res.ok && data.success) {
       closeAddProjectModal();
-      showToast(`تمت إضافة المشروع "${name}" بنجاح في قسم (${getCategoryLabel(category)})`, 'success');
+      showToast(
+        isEdit
+          ? `تم تحديث المشروع "${name}" بنجاح`
+          : `تمت إضافة المشروع "${name}" بنجاح في قسم (${getCategoryLabel(category)})`,
+        'success'
+      );
 
       const currentCat = getCurrentCategory();
 
@@ -377,11 +687,12 @@ async function handleSaveProject(event) {
 }
 
 // 7. حذف المشروع
-function promptDeleteProject(id, name) {
+function promptDeleteProject(id) {
   pendingDeleteId = id;
+  const proj = allLoadedProjects.find(p => p.id === id);
   const modal = document.getElementById('deleteProjectModal');
   const badge = document.getElementById('deleteProjectTargetBadge');
-  if (badge) badge.textContent = name;
+  if (badge) badge.textContent = proj ? proj.name : '';
   if (modal) modal.classList.remove('d-none');
 }
 
@@ -421,33 +732,23 @@ async function executeDeleteProject() {
   }
 }
 
-// 8. البحث الفوري
+// 8. البحث الفوري في قاعدة البيانات (مع Debounce لمنع الضغط أثناء الكتابة)
 function handleSearchProjects() {
-  const query = (document.getElementById('projectSearchInput')?.value || '').trim().toLowerCase();
-  if (!query) {
-    renderProjects(allLoadedProjects);
-    return;
-  }
-
-  const filtered = allLoadedProjects.filter(p => 
-    (p.name && p.name.toLowerCase().includes(query)) ||
-    (p.location && p.location.toLowerCase().includes(query)) ||
-    (p.description && p.description.toLowerCase().includes(query))
-  );
-
-  renderProjects(filtered);
+  const query = (document.getElementById('projectSearchInput')?.value || '').trim();
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    loadProjects(query);
+  }, 300);
 }
 
-// 9. دوال مساعدة عامة
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+function clearProjectsSearch() {
+  const input = document.getElementById('projectSearchInput');
+  if (input) input.value = '';
+  clearTimeout(searchDebounceTimer);
+  loadProjects('');
 }
+
+// 9. دوال مساعدة عامة (escapeHtml provided globally by global-loader.js)
 
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');

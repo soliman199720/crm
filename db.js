@@ -135,6 +135,16 @@ async function initDB() {
       );
     `);
 
+    // 7.1 جدول محاولات تسجيل الدخول الفاشلة (مشترك بين كافة نسخ الخادم Cluster-safe Rate Limiting)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        ip VARCHAR(45) PRIMARY KEY,
+        attempts INT NOT NULL DEFAULT 0,
+        first_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        blocked_until TIMESTAMP NULL
+      );
+    `);
+
     // 8. جدول المشروعات (المشروعات التجارية والسكنية والأراضي)
     await client.query(`
       CREATE TABLE IF NOT EXISTS projects (
@@ -159,6 +169,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       ALTER TABLE projects ADD COLUMN IF NOT EXISTS area_sqm NUMERIC(15, 2) DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN IF NOT EXISTS images_json TEXT DEFAULT '[]';
       CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category);
       CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
     `);
@@ -178,10 +189,12 @@ async function initDB() {
         reserved_client_id INT REFERENCES clients(id) ON DELETE SET NULL,
         reserved_client_name VARCHAR(100),
         notes TEXT,
+        images_json TEXT DEFAULT '[]',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT unique_project_unit_code UNIQUE (project_id, unit_code)
       );
+      ALTER TABLE project_units ADD COLUMN IF NOT EXISTS images_json TEXT DEFAULT '[]';
       CREATE INDEX IF NOT EXISTS idx_units_project_id ON project_units(project_id);
       CREATE INDEX IF NOT EXISTS idx_units_status ON project_units(status);
     `);
@@ -213,7 +226,7 @@ async function initDB() {
       }
     }
 
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     const defaultPassword = await bcrypt.hash('112233', salt);
 
     // التأكد من حساب الأدمن / المالك

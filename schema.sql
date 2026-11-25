@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS projects (
   location_url TEXT,
   description TEXT,
   area_sqm NUMERIC(15, 2) DEFAULT 0,
+  images_json TEXT DEFAULT '[]',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category);
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS project_units (
   reserved_client_id INT REFERENCES clients(id) ON DELETE SET NULL,
   reserved_client_name VARCHAR(100),
   notes TEXT,
+  images_json TEXT DEFAULT '[]',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT unique_project_unit_code UNIQUE (project_id, unit_code)

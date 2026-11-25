@@ -59,7 +59,7 @@ async function checkCurrentSession() {
       const data = await res.json();
       if (data.success && data.user) {
         const u = data.user;
-        const isOwner = (u.role && (u.role.includes('Owner') || u.role.includes('المالك'))) || u.email === '1@1.com';
+        const isOwner = u.role && (u.role.includes('Owner') || u.role.includes('المالك'));
         window.location.href = isOwner ? '/crm' : '/sales-portal';
       }
     }
@@ -72,10 +72,13 @@ async function checkCurrentSession() {
 function showAlert(message, type = 'error') {
   const alertBox = document.getElementById('alertBox');
   alertBox.className = `alert-box ${type}`;
-  alertBox.innerHTML = `
-    <i class="fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i>
-    <span>${message}</span>
-  `;
+  const icon = document.createElement('i');
+  icon.className = `fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}`;
+  const span = document.createElement('span');
+  span.textContent = message;
+  alertBox.innerHTML = '';
+  alertBox.appendChild(icon);
+  alertBox.appendChild(span);
   alertBox.classList.remove('d-none');
 }
 
