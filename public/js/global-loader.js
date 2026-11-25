@@ -37,7 +37,7 @@
     if (isOwner) return;
 
     document.querySelectorAll('.topbar-nav-pills a[href="/sales"], .topbar-nav-pills a[href="/users"], .topbar-nav-pills a[href="/logs"]').forEach(function(el) {
-      el.style.display = 'none';
+      el.remove();
     });
 
     document.querySelectorAll('a[href="/crm"]').forEach(function(link) {
@@ -48,7 +48,7 @@
     });
 
     document.querySelectorAll('.db-live-pill').forEach(function(el) {
-      el.style.display = 'none';
+      el.remove();
     });
 
     document.querySelectorAll('.brand-badge-pill').forEach(function(el) {
