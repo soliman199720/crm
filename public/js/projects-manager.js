@@ -85,10 +85,12 @@ async function initProjectsPage() {
             <input type="text" id="projectSearchInput" placeholder="بحث بالاسم، الموقع، أو التفاصيل..." oninput="handleSearchProjects()">
           </div>
 
-          <button class="btn-add-main-project" onclick="openAddProjectModal()">
-            <i class="fa-solid fa-plus-circle"></i>
-            <span>إضافة مشروع جديد</span>
-          </button>
+          ${currentUserIsOwner ? `
+            <button class="btn-add-main-project" onclick="openAddProjectModal()">
+              <i class="fa-solid fa-plus-circle"></i>
+              <span>إضافة مشروع جديد</span>
+            </button>
+          ` : ''}
         </div>
       </section>
 
@@ -303,10 +305,10 @@ function createProjectCardHtml(p) {
           <i class="fa-solid ${catIcon}"></i> ${catLabel}
         </span>
         <div style="display:flex; align-items:center; gap:6px;">
-          <button class="btn-icon-edit-card" onclick="event.stopPropagation(); openEditProjectModal(${p.id})" title="تعديل المشروع">
-            <i class="fa-solid fa-pen-to-square"></i>
-          </button>
           ${currentUserIsOwner ? `
+            <button class="btn-icon-edit-card" onclick="event.stopPropagation(); openEditProjectModal(${p.id})" title="تعديل المشروع">
+              <i class="fa-solid fa-pen-to-square"></i>
+            </button>
             <button class="btn-icon-del-card" onclick="event.stopPropagation(); promptDeleteProject(${p.id})" title="حذف المشروع">
               <i class="fa-solid fa-trash-can"></i>
             </button>
@@ -390,11 +392,13 @@ function renderProjects(projects, searchTerm = '') {
           <i class="fa-solid fa-folder-open"></i>
         </div>
         <h3>لا توجد مشروعات مسجلة هنا حتى الآن</h3>
-        <p>ابدأ بإضافة أول مشروع في قسم <strong>${getCategoryLabel(currentCat)}</strong> الآن.</p>
-        <button class="btn-add-main-project" onclick="openAddProjectModal()">
-          <i class="fa-solid fa-plus-circle"></i>
-          <span>إضافة مشروع جديد الآن</span>
-        </button>
+        <p>${currentUserIsOwner ? `ابدأ بإضافة أول مشروع في قسم <strong>${getCategoryLabel(currentCat)}</strong> الآن.` : 'لا توجد مشروعات مضافة في هذا القسم حالياً.'}</p>
+        ${currentUserIsOwner ? `
+          <button class="btn-add-main-project" onclick="openAddProjectModal()">
+            <i class="fa-solid fa-plus-circle"></i>
+            <span>إضافة مشروع جديد الآن</span>
+          </button>
+        ` : ''}
       </div>
     `;
     return;

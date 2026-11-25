@@ -243,10 +243,12 @@ function renderProjectDetails(root, p) {
           <h3><i class="fa-solid fa-cubes"></i> وحدات المشروع</h3>
           <small>إدارة الوحدات والقطع الخاصة بهذا المشروع</small>
         </div>
-        <button type="button" class="btn-add-main-project" onclick="openAddUnitModal()">
-          <i class="fa-solid fa-plus-circle"></i>
-          <span>إضافة وحدة</span>
-        </button>
+        ${currentUserIsOwner ? `
+          <button type="button" class="btn-add-main-project" onclick="openAddUnitModal()">
+            <i class="fa-solid fa-plus-circle"></i>
+            <span>إضافة وحدة</span>
+          </button>
+        ` : ''}
       </div>
 
       <div class="units-stats-strip" id="unitsStatsStrip">
@@ -713,10 +715,10 @@ function renderUnitsGrid(units) {
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
             <span class="unit-status-pill ${statusClass}">${escapeHtml(u.status)}</span>
-            <button type="button" class="btn-icon-edit-card" onclick="openEditUnitModal(${u.id})" title="تعديل الوحدة">
-              <i class="fa-solid fa-pen-to-square"></i>
-            </button>
             ${currentUserIsOwner ? `
+              <button type="button" class="btn-icon-edit-card" onclick="openEditUnitModal(${u.id})" title="تعديل الوحدة">
+                <i class="fa-solid fa-pen-to-square"></i>
+              </button>
               <button type="button" class="btn-icon-del-card" onclick="deleteUnit(${u.id}, '${escapeHtml(u.unit_code)}')" title="حذف الوحدة">
                 <i class="fa-solid fa-trash-can"></i>
               </button>

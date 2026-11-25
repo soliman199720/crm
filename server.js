@@ -2045,8 +2045,8 @@ async function mergeAndSaveImages(existingImages, newBase64Images, oldImagesJson
   return [...keptUrls, ...newUrls];
 }
 
-// 9.2 إضافة مشروع جديد (للأونر والسيلز)
-app.post('/api/projects', authMiddleware, async (req, res) => {
+// 9.2 إضافة مشروع جديد (للأونر فقط)
+app.post('/api/projects', authMiddleware, requireOwner, async (req, res) => {
   let {
     category = 'commercial',
     name,
@@ -2123,8 +2123,8 @@ app.post('/api/projects', authMiddleware, async (req, res) => {
   }
 });
 
-// 9.3 تعديل بيانات مشروع (للأونر والسيلز)
-app.put('/api/projects/:id', authMiddleware, async (req, res) => {
+// 9.3 تعديل بيانات مشروع (للأونر فقط)
+app.put('/api/projects/:id', authMiddleware, requireOwner, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   if (isNaN(projectId)) {
     return res.status(400).json({ success: false, message: 'معرف المشروع غير صحيح' });
@@ -2440,8 +2440,8 @@ app.get('/api/projects/:id/units', authMiddleware, async (req, res) => {
   }
 });
 
-// 9.6.2 إضافة وحدة جديدة للمشروع (للأونر والسيلز)
-app.post('/api/projects/:id/units', authMiddleware, async (req, res) => {
+// 9.6.2 إضافة وحدة جديدة للمشروع (للأونر فقط)
+app.post('/api/projects/:id/units', authMiddleware, requireOwner, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   if (isNaN(projectId)) {
     return res.status(400).json({ success: false, message: 'معرف المشروع غير صحيح' });
@@ -2531,8 +2531,8 @@ app.post('/api/projects/:id/units', authMiddleware, async (req, res) => {
   }
 });
 
-// 9.6.3 تعديل بيانات وحدة (للأونر والسيلز)
-app.put('/api/projects/:id/units/:unitId', authMiddleware, async (req, res) => {
+// 9.6.3 تعديل بيانات وحدة (للأونر فقط)
+app.put('/api/projects/:id/units/:unitId', authMiddleware, requireOwner, async (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   const unitId = parseInt(req.params.unitId, 10);
   if (isNaN(projectId) || isNaN(unitId)) {
