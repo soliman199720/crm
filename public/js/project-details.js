@@ -96,11 +96,8 @@ async function loadProjectDetails() {
       const meData = await meRes.json();
       const role = meData.user?.role || '';
       currentUserIsOwner = role.includes('Owner') || role.includes('المالك');
-      if (!currentUserIsOwner) {
-        document.querySelectorAll('a[href="/crm"]').forEach(link => {
-          link.setAttribute('href', '/sales-portal');
-          link.setAttribute('title', 'العودة لبوابة السيلز');
-        });
+      if (typeof window.applyProjectsTopbarForRole === 'function') {
+        window.applyProjectsTopbarForRole(meData.user);
       }
     }
   } catch (_) {}

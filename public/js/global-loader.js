@@ -30,6 +30,43 @@
       .replace(/'/g, '&#039;');
   };
 
+  // ضبط شريط التنقل العلوي في صفحات المشروعات حسب صلاحية المستخدم (أونر أم سيلز)
+  window.applyProjectsTopbarForRole = function(user) {
+    const role = (user && user.role) ? user.role : '';
+    const isOwner = role.includes('Owner') || role.includes('المالك');
+    if (isOwner) return;
+
+    document.querySelectorAll('.topbar-nav-pills a[href="/sales"], .topbar-nav-pills a[href="/users"], .topbar-nav-pills a[href="/logs"]').forEach(function(el) {
+      el.style.display = 'none';
+    });
+
+    document.querySelectorAll('a[href="/crm"]').forEach(function(link) {
+      link.setAttribute('href', '/sales-portal');
+      link.setAttribute('title', 'العودة لبوابة السيلز');
+      const span = link.querySelector('span');
+      if (span) span.textContent = 'العودة لبوابة السيلز';
+    });
+
+    document.querySelectorAll('.db-live-pill').forEach(function(el) {
+      el.style.display = 'none';
+    });
+
+    document.querySelectorAll('.brand-badge-pill').forEach(function(el) {
+      if (el.textContent.trim() === 'البوابة الإدارية') {
+        el.textContent = 'بوابة المبيعات';
+      }
+    });
+
+    document.querySelectorAll('.owner-badge').forEach(function(badge) {
+      const strong = badge.querySelector('.owner-text strong');
+      const small = badge.querySelector('.owner-text small');
+      const icon = badge.querySelector('.avatar-circle i');
+      if (strong) strong.textContent = (user && (user.fullName || user.full_name)) || 'مسؤول المبيعات';
+      if (small) small.textContent = role || 'سيلز (Sales)';
+      if (icon) icon.className = 'fa-solid fa-headset';
+    });
+  };
+
   // صمام أمان عند اكتمال تحميل عناصر الصفحة بالكامل window.load
   if (document.readyState === 'complete') {
     setTimeout(dismissGlobalLoader, 180);
