@@ -81,3 +81,10 @@ test('.gitignore excludes secrets and build artifacts', () => {
     );
   }
 });
+
+test('Duplicate and archive client handling is present in server.js', () => {
+  const serverCode = fs.readFileSync(path.join(rootDir, 'server.js'), 'utf8');
+  for (const token of ['normalizePhone', 'ARCHIVED_CLIENT_STATUSES', 'requiresConfirmation', 'confirm_restore', 'restore_archived']) {
+    assert.equal(serverCode.includes(token), true, `Missing duplicate/archive token: ${token}`);
+  }
+});

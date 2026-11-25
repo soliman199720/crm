@@ -1014,28 +1014,54 @@ function resetExcelImport() {
   document.getElementById('btnSubmitExcel').disabled = true;
 }
 
-// إرسال وحفظ عملاء الإكسيل في قاعدة البيانات
-async function submitExcelClients() {
-  if (parsedExcelClients.length === 0) return;
-
-  const btn = document.getElementById('btnSubmitExcel');
-  const autoDistribute = document.getElementById('excelAutoDistribute').checked;
-
+// دالة موحدة لإرسال العملاء دفعة واحدة مع التعامل مع تنبيهات التكرار والأرشيف
+async function submitBulkClientsFlow(clientsList, autoDistribute, btn, origBtnHtml, onSuccessReset, restoreArchived) {
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري حفظ العملاء في PostgreSQL...';
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري الفحص والحفظ في PostgreSQL...';
 
   try {
+    const payload = { clients: clientsList, auto_distribute: autoDistribute };
+    if (typeof restoreArchived === 'boolean') {
+      payload.restore_archived = restoreArchived;
+    }
+
     const res = await fetch('/api/clients/bulk-create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clients: parsedExcelClients, auto_distribute: autoDistribute })
+      body: JSON.stringify(payload)
     });
 
     const data = await res.json();
+    if (data.requiresConfirmation && data.summary) {
+      const s = data.summary;
+      const samplesText = (s.archivedSamples || [])
+        .map(item => `• ${item.name} (${item.phone}) - أرشيف: ${item.salesName} [${item.status}]`)
+        .join('\n');
+      const dialogMsg =
+        `تفاصيل الفحص قبل الحفظ:\n` +
+        `• عملاء جدد: ${s.newCount}\n` +
+        `• موجودون في الأرشيف: ${s.archivedCount}\n` +
+        (s.activeDuplicateCount > 0 ? `• مكررون في القائمة النشطة (سيتم تجاهلهم): ${s.activeDuplicateCount}\n` : '') +
+        (samplesText ? `\nأمثلة من الأرشيف:\n${samplesText}\n` : '') +
+        `\nهل تريد إضافة الجدد واستعادة العملاء المؤرشفين وإزالتهم من الأرشيف؟`;
+
+      const confirmed = await window.showCrmConfirmDialog({
+        title: 'تنبيه: عملاء موجودون في الأرشيف',
+        message: dialogMsg,
+        confirmText: `تأكيد وإزالة (${s.archivedCount}) من الأرشيف`,
+        cancelText: 'إلغاء'
+      });
+
+      if (confirmed) {
+        return await submitBulkClientsFlow(clientsList, autoDistribute, btn, origBtnHtml, onSuccessReset, true);
+      }
+      return;
+    }
+
     if (data.success) {
       closeNewClientModal();
-      showToast(data.message, 'success');
-      resetExcelImport();
+      showToast(data.message, (data.skippedCount > 0 && data.count === 0 && !data.restoredCount) ? 'info' : 'success');
+      if (typeof onSuccessReset === 'function') onSuccessReset();
       await loadAllData();
     } else {
       showToast('فشل الاستيراد: ' + (data.message || 'خطأ غير معروف'), 'error');
@@ -1044,8 +1070,18 @@ async function submitExcelClients() {
     showToast('حدث خطأ في الاتصال بالخادم أثناء حفظ العملاء', 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> <span>بدء استيراد وحفظ العملاء في PostgreSQL</span>';
+    btn.innerHTML = origBtnHtml;
   }
+}
+
+// إرسال وحفظ عملاء الإكسيل في قاعدة البيانات
+async function submitExcelClients() {
+  if (parsedExcelClients.length === 0) return;
+
+  const btn = document.getElementById('btnSubmitExcel');
+  const autoDistribute = document.getElementById('excelAutoDistribute').checked;
+  const origHtml = '<i class="fa-solid fa-cloud-arrow-up"></i> <span>بدء استيراد وحفظ العملاء في PostgreSQL</span>';
+  await submitBulkClientsFlow(parsedExcelClients, autoDistribute, btn, origHtml, resetExcelImport);
 }
 
 // ==================== معالجة النسخ واللصق السريع ====================
@@ -1107,34 +1143,13 @@ async function submitPastedClients() {
 
   const btn = document.getElementById('btnSubmitPaste');
   const autoDistribute = document.getElementById('pasteAutoDistribute').checked;
+  const origHtml = '<i class="fa-solid fa-paste"></i> <span>إدراج وحفظ العملاء المنسوخين</span>';
 
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري الحفظ في PostgreSQL...';
-
-  try {
-    const res = await fetch('/api/clients/bulk-create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clients: parsedPastedClients, auto_distribute: autoDistribute })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      closeNewClientModal();
-      showToast(data.message, 'success');
-      document.getElementById('pasteClientsText').value = '';
-      document.getElementById('pastePreviewContainer').classList.add('d-none');
-      parsedPastedClients = [];
-      await loadAllData();
-    } else {
-      showToast('فشل الإدراج: ' + (data.message || 'خطأ غير معروف'), 'error');
-    }
-  } catch (err) {
-    showToast('حدث خطأ أثناء إدراج العملاء', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-paste"></i> <span>إدراج وحفظ العملاء المنسوخين</span>';
-  }
+  await submitBulkClientsFlow(parsedPastedClients, autoDistribute, btn, origHtml, () => {
+    document.getElementById('pasteClientsText').value = '';
+    document.getElementById('pastePreviewContainer').classList.add('d-none');
+    parsedPastedClients = [];
+  });
 }
 
 async function handleCreateClient(e) {
@@ -1147,14 +1162,39 @@ async function handleCreateClient(e) {
   const assigned_sales_id = assignVal ? parseInt(assignVal, 10) : null;
   const notes = document.getElementById('newClientNotes').value.trim();
 
-  try {
+  async function sendCreateRequest(confirmRestore = false) {
     const res = await fetch('/api/clients', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, company: '', phone, email: '', project_interest, total_value, assigned_sales_id, notes })
+      body: JSON.stringify({
+        name,
+        company: '',
+        phone,
+        email: '',
+        project_interest,
+        total_value,
+        assigned_sales_id,
+        notes,
+        confirm_restore: confirmRestore
+      })
     });
+    return res.json();
+  }
 
-    const data = await res.json();
+  try {
+    let data = await sendCreateRequest(false);
+
+    if (data.requiresConfirmation) {
+      const confirmed = await window.showCrmConfirmDialog({
+        title: 'العميل موجود في الأرشيف',
+        message: data.message,
+        confirmText: 'تأكيد الإضافة والإزالة من الأرشيف',
+        cancelText: 'إلغاء'
+      });
+      if (!confirmed) return;
+      data = await sendCreateRequest(true);
+    }
+
     if (data.success) {
       closeNewClientModal();
       showToast(data.message || 'تمت إضافة العميل بنجاح في قاعدة البيانات', 'success');

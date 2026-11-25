@@ -47,6 +47,40 @@ function parsePositiveInt(val) {
 }
 
 const ALLOWED_CLIENT_STATUSES = ['عميل جديد', 'جديد', 'تم الإسناد', 'قيد المتابعة', 'مؤجل', 'تم التعاقد', 'ملغي'];
+const ARCHIVED_CLIENT_STATUSES = ['تم التعاقد', 'ملغي'];
+
+// دالة توحيد صيغة رقم الهاتف للمقارنة ومنع التكرار
+function normalizePhone(phone) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+  if (digits.startsWith('201') && digits.length === 12) {
+    digits = '0' + digits.slice(2);
+  } else if (digits.length === 10 && digits.startsWith('1')) {
+    digits = '0' + digits;
+  }
+  return digits;
+}
+
+// دالة مساعدة لجلب خريطة العملاء الموجودين حسب رقم الهاتف الموحد
+async function getExistingClientsByPhoneMap(dbClient = pool) {
+  const res = await dbClient.query(
+    `SELECT id, name, phone, status, assigned_sales_id, assigned_sales_name
+     FROM clients
+     WHERE phone IS NOT NULL AND phone != ''
+     ORDER BY id DESC`
+  );
+  const map = new Map();
+  for (const row of res.rows) {
+    const norm = normalizePhone(row.phone);
+    if (norm && !map.has(norm)) {
+      map.set(norm, row);
+    }
+  }
+  return map;
+}
 
 // دالة التحقق من رتبة المالك / المدير العام (مبنية على الدور فقط من قاعدة البيانات)
 function isUserOwner(user) {
@@ -802,14 +836,46 @@ app.get('/api/clients', authMiddleware, async (req, res) => {
   }
 });
 
-// 4. إضافة عميل جديد (للأونر أو لموظف السيلز مع توثيق المنشئ)
+// 4. إضافة عميل جديد (للأونر أو لموظف السيلز مع منع التكرار وتنبيه الأرشيف)
 app.post('/api/clients', authMiddleware, async (req, res) => {
-  const { name, company, phone, email, project_interest, total_value, assigned_sales_id, notes } = req.body;
+  const { name, company, phone, email, project_interest, total_value, assigned_sales_id, notes, confirm_restore } = req.body;
   if (!name || !phone) {
     return res.status(400).json({ success: false, message: 'يرجى إدخال اسم العميل ورقم هاتفه' });
   }
 
   try {
+    const normPhone = normalizePhone(phone);
+    if (normPhone) {
+      const phoneMap = await getExistingClientsByPhoneMap(pool);
+      const existing = phoneMap.get(normPhone);
+      if (existing) {
+        const isArchived = ARCHIVED_CLIENT_STATUSES.includes(existing.status);
+        const existingSales = existing.assigned_sales_name || 'غير مسند';
+
+        if (!isArchived) {
+          return res.status(409).json({
+            success: false,
+            duplicateActive: true,
+            message: `هذا الرقم مسجل بالفعل في القائمة النشطة للعميل (${existing.name}) لدى (${existingSales}) بحالة [${existing.status}]`
+          });
+        }
+
+        if (confirm_restore !== true) {
+          return res.status(409).json({
+            success: false,
+            requiresConfirmation: true,
+            archivedClient: {
+              id: existing.id,
+              name: existing.name,
+              status: existing.status,
+              assigned_sales_name: existingSales
+            },
+            message: `الرقم (${phone.trim()}) موجود مسبقاً في أرشيف السيلز (${existingSales}) بحالة [${existing.status}] للعميل (${existing.name}). هل تريد إضافته وإزالته من الأرشيف؟`
+          });
+        }
+      }
+    }
+
     const isOwner = isUserOwner(req.user);
     let salesId = null;
     let salesName = null;
@@ -839,53 +905,94 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
       createdByName = req.user.full_name;
     }
 
-    const query = `
-      INSERT INTO clients (name, company, phone, email, project_interest, total_value, assigned_sales_id, assigned_sales_name, created_by_id, created_by_name, notes, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      RETURNING *
-    `;
-    const result = await pool.query(query, [
-      name.trim(),
-      company || '',
-      phone.trim(),
-      email || '',
-      project_interest || 'مشروع وتطوير أعمال',
-      Math.max(0, parseFloat(total_value) || 0),
-      salesId,
-      salesName,
-      createdById,
-      createdByName,
-      notes || '',
-      clientStatus
-    ]);
+    let result;
+    let restoredFromArchive = false;
+    if (confirm_restore === true && normPhone) {
+      const phoneMap = await getExistingClientsByPhoneMap(pool);
+      const existingArchived = phoneMap.get(normPhone);
+      if (existingArchived && ARCHIVED_CLIENT_STATUSES.includes(existingArchived.status)) {
+        restoredFromArchive = true;
+        result = await pool.query(
+          `UPDATE clients
+           SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5,
+               total_value = $6, assigned_sales_id = $7, assigned_sales_name = $8,
+               created_by_id = $9, created_by_name = $10, notes = $11, status = $12,
+               postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE
+           WHERE id = $13
+           RETURNING *`,
+          [
+            name.trim(),
+            company || '',
+            phone.trim(),
+            email || '',
+            project_interest || 'مشروع وتطوير أعمال',
+            Math.max(0, parseFloat(total_value) || 0),
+            salesId,
+            salesName,
+            createdById,
+            createdByName,
+            notes || '',
+            clientStatus,
+            existingArchived.id
+          ]
+        );
+      }
+    }
+
+    if (!restoredFromArchive) {
+      const query = `
+        INSERT INTO clients (name, company, phone, email, project_interest, total_value, assigned_sales_id, assigned_sales_name, created_by_id, created_by_name, notes, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING *
+      `;
+      result = await pool.query(query, [
+        name.trim(),
+        company || '',
+        phone.trim(),
+        email || '',
+        project_interest || 'مشروع وتطوير أعمال',
+        Math.max(0, parseFloat(total_value) || 0),
+        salesId,
+        salesName,
+        createdById,
+        createdByName,
+        notes || '',
+        clientStatus
+      ]);
+    }
 
     // تسجيل العملية في سجل الرقابة
-    const detailsText = isOwner
-      ? `تم تسجيل العميل (${name.trim()}) في المنظومة بمشروع (${project_interest || 'عام'})${salesName ? ' وإسناده فوراً إلى ' + salesName : ' (غير مسند)'}`
-      : `قام مسؤول المبيعات (${req.user.full_name}) بإضافة العميل (${name.trim()}) وارتبط بحسابه تلقائياً لمتابعته`;
+    const detailsText = restoredFromArchive
+      ? `تمت استعادة العميل (${name.trim()}) من الأرشيف وإضافته للقائمة النشطة${salesName ? ' وإسناده إلى ' + salesName : ''}`
+      : (isOwner
+        ? `تم تسجيل العميل (${name.trim()}) في المنظومة بمشروع (${project_interest || 'عام'})${salesName ? ' وإسناده فوراً إلى ' + salesName : ' (غير مسند)'}`
+        : `قام مسؤول المبيعات (${req.user.full_name}) بإضافة العميل (${name.trim()}) وارتبط بحسابه تلقائياً لمتابعته`);
 
     await logActivity({
       req,
-      actionType: 'إضافة عميل جديد',
+      actionType: restoredFromArchive ? 'استعادة عميل من الأرشيف' : 'إضافة عميل جديد',
       actionCategory: 'إدارة العملاء',
       targetType: 'عميل',
       targetName: name.trim(),
       details: detailsText
     });
 
-    res.status(201).json({ 
+    res.status(restoredFromArchive ? 200 : 201).json({ 
       success: true, 
+      restored: restoredFromArchive,
       client: result.rows[0], 
-      message: isOwner ? 'تمت إضافة العميل بنجاح' : 'تمت إضافة العميل وإسناده لحسابك تلقائياً بنجاح للبدء في متابعته' 
+      message: restoredFromArchive
+        ? 'تمت إزالة العميل من الأرشيف وإضافته للقائمة النشطة بنجاح'
+        : (isOwner ? 'تمت إضافة العميل بنجاح' : 'تمت إضافة العميل وإسناده لحسابك تلقائياً بنجاح للبدء في متابعته')
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'حدث خطأ داخلي في الخادم' });
   }
 });
 
-// 4.1 إضافة مجموعة عملاء دفعة واحدة (إكسيل / نسخ ولصق) مع خيار التوزيع التلقائي (للأونر فقط)
+// 4.1 إضافة مجموعة عملاء دفعة واحدة (إكسيل / نسخ ولصق) مع فحص التكرار والأرشيف والتوزيع التلقائي (للأونر فقط)
 app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, res) => {
-  const { clients, auto_distribute } = req.body;
+  const { clients, auto_distribute, restore_archived } = req.body;
 
   if (!Array.isArray(clients) || clients.length === 0) {
     return res.status(400).json({ success: false, message: 'لم يتم إرسال أي بيانات عملاء للإدراج' });
@@ -894,47 +1001,131 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
-    const insertedIds = [];
+    const existingPhoneMap = await getExistingClientsByPhoneMap(clientDb);
+    const seenInBatch = new Set();
+
+    const newEntries = [];
+    const archivedMatches = [];
+    let activeDuplicatesCount = 0;
+    let inBatchDuplicatesCount = 0;
 
     for (const c of clients) {
       const name = (c.name || '').trim();
       const phone = (c.phone || '').trim();
-      if (!name && !phone) continue; // تخطي الأسطر الفارغة
+      if (!name && !phone) continue;
 
-      const company = (c.company || '').trim();
-      const email = (c.email || '').trim();
-      const project_interest = (c.project_interest || 'مشروع وتطوير أعمال').trim();
-      const total_value = Math.max(0, parseFloat(c.total_value) || 0);
-      const notes = (c.notes || '').trim();
+      const cleanEntry = {
+        name: name || 'عميل بدون اسم',
+        company: (c.company || '').trim(),
+        phone: phone || '—',
+        email: (c.email || '').trim(),
+        project_interest: (c.project_interest || 'مشروع وتطوير أعمال').trim(),
+        total_value: Math.max(0, parseFloat(c.total_value) || 0),
+        notes: (c.notes || '').trim()
+      };
 
-      const insertRes = await clientDb.query(
-        `INSERT INTO clients (name, company, phone, email, project_interest, total_value, notes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'عميل جديد')
-         RETURNING id`,
-        [name || 'عميل بدون اسم', company, phone || '—', email, project_interest, total_value, notes]
-      );
-      insertedIds.push(insertRes.rows[0].id);
+      const norm = normalizePhone(phone);
+      if (norm) {
+        if (seenInBatch.has(norm)) {
+          inBatchDuplicatesCount++;
+          continue;
+        }
+        seenInBatch.add(norm);
+
+        const existing = existingPhoneMap.get(norm);
+        if (existing) {
+          if (ARCHIVED_CLIENT_STATUSES.includes(existing.status)) {
+            archivedMatches.push({ incoming: cleanEntry, existing });
+          } else {
+            activeDuplicatesCount++;
+          }
+          continue;
+        }
+      }
+
+      newEntries.push(cleanEntry);
     }
 
-    if (insertedIds.length === 0) {
+    if (newEntries.length === 0 && archivedMatches.length === 0 && activeDuplicatesCount === 0 && inBatchDuplicatesCount === 0) {
       await clientDb.query('ROLLBACK');
       return res.status(400).json({ success: false, message: 'لم يتم العثور على بيانات صالحة في القائمة المدخلة' });
     }
 
+    // إذا كان هناك عملاء موجودون في الأرشيف ولم يحدد المستخدم قراره بعد، نرسل تنبيهاً للتأكيد
+    if (archivedMatches.length > 0 && restore_archived !== true && restore_archived !== false) {
+      await clientDb.query('ROLLBACK');
+      const totalSkippedActive = activeDuplicatesCount + inBatchDuplicatesCount;
+      return res.status(409).json({
+        success: false,
+        requiresConfirmation: true,
+        summary: {
+          newCount: newEntries.length,
+          archivedCount: archivedMatches.length,
+          activeDuplicateCount: totalSkippedActive,
+          archivedSamples: archivedMatches.slice(0, 5).map(m => ({
+            name: m.existing.name,
+            phone: m.existing.phone,
+            status: m.existing.status,
+            salesName: m.existing.assigned_sales_name || 'غير مسند'
+          }))
+        },
+        message: `تنبيه: يوجد (${archivedMatches.length}) عميل موجود مسبقاً في الأرشيف` +
+          (totalSkippedActive > 0 ? ` و(${totalSkippedActive}) عميل مكرر في القائمة النشطة (سيتم تجاهلهم)` : '') +
+          (newEntries.length > 0 ? `، بالإضافة إلى (${newEntries.length}) عميل جديد.` : '.') +
+          ` هل تريد إضافة الجدد وإزالة الـ (${archivedMatches.length}) عميل من الأرشيف؟`
+      });
+    }
+
+    const insertedIds = [];
+    for (const entry of newEntries) {
+      const insertRes = await clientDb.query(
+        `INSERT INTO clients (name, company, phone, email, project_interest, total_value, notes, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'عميل جديد')
+         RETURNING id`,
+        [entry.name, entry.company, entry.phone, entry.email, entry.project_interest, entry.total_value, entry.notes]
+      );
+      insertedIds.push(insertRes.rows[0].id);
+    }
+
+    const restoredIds = [];
+    if (restore_archived === true && archivedMatches.length > 0) {
+      for (const match of archivedMatches) {
+        await clientDb.query(
+          `UPDATE clients
+           SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5,
+               total_value = $6, notes = $7, status = 'عميل جديد',
+               assigned_sales_id = NULL, assigned_sales_name = NULL,
+               postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE
+           WHERE id = $8`,
+          [
+            match.incoming.name,
+            match.incoming.company,
+            match.incoming.phone,
+            match.incoming.email,
+            match.incoming.project_interest,
+            match.incoming.total_value,
+            match.incoming.notes,
+            match.existing.id
+          ]
+        );
+        restoredIds.push(match.existing.id);
+      }
+    }
+
+    const allAffectedIds = [...insertedIds, ...restoredIds];
     let distributedInfo = '';
-    // في حال تفعيل خيار التوزيع التلقائي الفوري
-    if (auto_distribute === true) {
+    if (auto_distribute === true && allAffectedIds.length > 0) {
       const salesQuery = await clientDb.query(
         "SELECT id, full_name FROM users WHERE (role LIKE '%سيلز%' OR role LIKE '%Sales%') AND (is_active IS NULL OR is_active = TRUE) ORDER BY id ASC"
       );
       const salesTeam = salesQuery.rows;
 
       if (salesTeam.length > 0) {
-        for (let i = 0; i < insertedIds.length; i++) {
+        for (let i = 0; i < allAffectedIds.length; i++) {
           const rep = salesTeam[i % salesTeam.length];
           await clientDb.query(
             "UPDATE clients SET assigned_sales_id = $1, assigned_sales_name = $2, status = 'تم الإسناد' WHERE id = $3",
-            [rep.id, rep.full_name, insertedIds[i]]
+            [rep.id, rep.full_name, allAffectedIds[i]]
           );
         }
         distributedInfo = ` وتم توزيعهم بالتساوي فوراً على ${salesTeam.length} من مسؤولي السيلز`;
@@ -943,20 +1134,31 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
 
     await clientDb.query('COMMIT');
 
-    // تسجيل العملية في سجل الرقابة
-    await logActivity({
-      req,
-      actionType: 'إدراج عملاء جماعي',
-      actionCategory: 'إدارة العملاء',
-      targetType: 'عملاء',
-      targetName: `${insertedIds.length} عميل`,
-      details: `تم إدراج ${insertedIds.length} عميل دفعة واحدة في المنظومة (Excel / نسخ ولصق)${distributedInfo}`
-    });
+    const skippedCount = activeDuplicatesCount + inBatchDuplicatesCount + (restore_archived === false ? archivedMatches.length : 0);
+    const parts = [];
+    if (insertedIds.length > 0) parts.push(`إدراج ${insertedIds.length} عميل جديد`);
+    if (restoredIds.length > 0) parts.push(`استعادة ${restoredIds.length} عميل من الأرشيف`);
+    if (skippedCount > 0) parts.push(`تجاهل ${skippedCount} عميل مكرر موجود مسبقاً`);
+
+    const summaryText = parts.length > 0 ? parts.join('، و') : 'لم يتم إضافة أي عملاء جدد (جميعهم موجودون مسبقاً)';
+
+    if (allAffectedIds.length > 0) {
+      await logActivity({
+        req,
+        actionType: 'إدراج عملاء جماعي',
+        actionCategory: 'إدارة العملاء',
+        targetType: 'عملاء',
+        targetName: `${allAffectedIds.length} عميل`,
+        details: `تم ${summaryText}${distributedInfo}`
+      });
+    }
 
     res.status(201).json({
       success: true,
       count: insertedIds.length,
-      message: `تم إدراج ${insertedIds.length} عميل بنجاح في قاعدة البيانات PostgreSQL${distributedInfo}!`
+      restoredCount: restoredIds.length,
+      skippedCount,
+      message: `${summaryText}${distributedInfo}!`
     });
   } catch (err) {
     await clientDb.query('ROLLBACK');

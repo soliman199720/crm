@@ -59,6 +59,7 @@ async function initDB() {
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_reminder_resolved BOOLEAN DEFAULT FALSE;`);
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by_id INT;`);
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by_name VARCHAR(100);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone);`);
 
     // 3. جدول سجل العمليات والرقابة (Audit Activity Logs)
     await client.query(`

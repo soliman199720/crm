@@ -1838,7 +1838,7 @@ async function handlePortalCreateClient(e) {
   const total_value = parseFloat(document.getElementById('portalClientValue').value) || 0;
   const notes = document.getElementById('portalClientNotes').value.trim();
 
-  try {
+  async function sendPortalCreate(confirmRestore = false) {
     const res = await fetch('/api/clients', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1849,11 +1849,27 @@ async function handlePortalCreateClient(e) {
         email: '',
         project_interest,
         total_value,
-        notes
+        notes,
+        confirm_restore: confirmRestore
       })
     });
+    return res.json();
+  }
 
-    const data = await res.json();
+  try {
+    let data = await sendPortalCreate(false);
+
+    if (data.requiresConfirmation) {
+      const confirmed = await window.showCrmConfirmDialog({
+        title: 'العميل موجود في الأرشيف',
+        message: data.message,
+        confirmText: 'تأكيد الإضافة والإزالة من الأرشيف',
+        cancelText: 'إلغاء'
+      });
+      if (!confirmed) return;
+      data = await sendPortalCreate(true);
+    }
+
     if (data.success) {
       closeNewClientModal();
       showToast(data.message || 'تمت إضافة العميل وإسناده لحسابك بنجاح للبدء في متابعته!', 'success');
