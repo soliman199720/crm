@@ -7,7 +7,7 @@ const pool = new Pool({
   port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'crm',
   user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || '112233',
+  password: process.env.DB_PASSWORD || '',
 });
 
 async function initDB() {
@@ -252,7 +252,8 @@ async function initDB() {
     }
 
     const salt = await bcrypt.genSalt(12);
-    const defaultPassword = await bcrypt.hash('112233', salt);
+    const initialAdminPass = process.env.DEFAULT_ADMIN_PASSWORD || '112233';
+    const defaultPassword = await bcrypt.hash(initialAdminPass, salt);
 
     // التأكد من حساب الأدمن / المالك
     const checkAdmin = await client.query("SELECT id FROM users WHERE email = '1@1.com' OR username = 'admin' LIMIT 1");

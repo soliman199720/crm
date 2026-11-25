@@ -30,6 +30,9 @@ app.use((req, res, next) => {
     "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; " +
     "img-src 'self' data: blob:; " +
     "connect-src 'self'; " +
+    "object-src 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
     "frame-ancestors 'none';"
   );
   next();
@@ -156,7 +159,7 @@ async function pageGuard(req, res, next) {
 }
 
 app.use(pageGuard);
-app.use('/uploads/chat', authMiddleware);
+app.use('/uploads', authMiddleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // التحقق من التوكن (Authentication Middleware)
