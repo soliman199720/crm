@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS clients (
   name VARCHAR(100) NOT NULL,
   company VARCHAR(150),
   phone VARCHAR(30),
+  normalized_phone VARCHAR(30),
   email VARCHAR(100),
   project_interest VARCHAR(150),
   total_value NUMERIC(15, 2) DEFAULT 0,
@@ -106,6 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_clients_assigned_sales ON clients(assigned_sales_id);
 CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone);
+CREATE INDEX IF NOT EXISTS idx_clients_normalized_phone ON clients(normalized_phone);
 CREATE INDEX IF NOT EXISTS idx_clients_archived_at ON clients(archived_at);
 CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);

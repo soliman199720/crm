@@ -64,17 +64,28 @@ function normalizePhone(phone) {
   return digits;
 }
 
-// دالة مساعدة لجلب خريطة العملاء الموجودين حسب رقم الهاتف الموحد
-async function getExistingClientsByPhoneMap(dbClient = pool) {
-  const res = await dbClient.query(
-    `SELECT id, name, phone, status, assigned_sales_id, assigned_sales_name
-     FROM clients
-     WHERE phone IS NOT NULL AND phone != ''
-     ORDER BY id DESC`
-  );
+// دالة مساعدة لجلب خريطة العملاء الموجودين حسب أرقام الهواتف الموحدة (باستخدام الفهرس المباشر)
+async function getExistingClientsByPhoneMap(dbClient = pool, targetNormalizedPhones = null) {
+  let res;
+  if (Array.isArray(targetNormalizedPhones) && targetNormalizedPhones.length > 0) {
+    res = await dbClient.query(
+      `SELECT id, name, phone, normalized_phone, status, assigned_sales_id, assigned_sales_name
+       FROM clients
+       WHERE normalized_phone = ANY($1::text[])
+       ORDER BY id DESC`,
+      [targetNormalizedPhones]
+    );
+  } else {
+    res = await dbClient.query(
+      `SELECT id, name, phone, normalized_phone, status, assigned_sales_id, assigned_sales_name
+       FROM clients
+       WHERE normalized_phone IS NOT NULL AND normalized_phone != ''
+       ORDER BY id DESC`
+    );
+  }
   const map = new Map();
   for (const row of res.rows) {
-    const norm = normalizePhone(row.phone);
+    const norm = row.normalized_phone || normalizePhone(row.phone);
     if (norm && !map.has(norm)) {
       map.set(norm, row);
     }
@@ -145,6 +156,7 @@ async function pageGuard(req, res, next) {
 }
 
 app.use(pageGuard);
+app.use('/uploads/chat', authMiddleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // التحقق من التوكن (Authentication Middleware)
@@ -850,7 +862,7 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
   try {
     const normPhone = normalizePhone(phone);
     if (normPhone) {
-      const phoneMap = await getExistingClientsByPhoneMap(pool);
+      const phoneMap = await getExistingClientsByPhoneMap(pool, [normPhone]);
       const existing = phoneMap.get(normPhone);
       if (existing) {
         const isArchived = ARCHIVED_CLIENT_STATUSES.includes(existing.status);
@@ -912,23 +924,24 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
     let result;
     let restoredFromArchive = false;
     if (confirm_restore === true && normPhone) {
-      const phoneMap = await getExistingClientsByPhoneMap(pool);
+      const phoneMap = await getExistingClientsByPhoneMap(pool, [normPhone]);
       const existingArchived = phoneMap.get(normPhone);
       if (existingArchived && ARCHIVED_CLIENT_STATUSES.includes(existingArchived.status)) {
         restoredFromArchive = true;
         result = await pool.query(
           `UPDATE clients
-           SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5,
-               total_value = $6, assigned_sales_id = $7, assigned_sales_name = $8,
-               created_by_id = $9, created_by_name = $10, notes = $11, status = $12,
+           SET name = $1, company = $2, phone = $3, normalized_phone = $4, email = $5, project_interest = $6,
+               total_value = $7, assigned_sales_id = $8, assigned_sales_name = $9,
+               created_by_id = $10, created_by_name = $11, notes = $12, status = $13,
                postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE,
                archived_at = NULL
-           WHERE id = $13
+           WHERE id = $14
            RETURNING *`,
           [
             name.trim(),
             company || '',
             phone.trim(),
+            normPhone,
             email || '',
             project_interest || 'مشروع وتطوير أعمال',
             Math.max(0, parseFloat(total_value) || 0),
@@ -946,14 +959,15 @@ app.post('/api/clients', authMiddleware, async (req, res) => {
 
     if (!restoredFromArchive) {
       const query = `
-        INSERT INTO clients (name, company, phone, email, project_interest, total_value, assigned_sales_id, assigned_sales_name, created_by_id, created_by_name, notes, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO clients (name, company, phone, normalized_phone, email, project_interest, total_value, assigned_sales_id, assigned_sales_name, created_by_id, created_by_name, notes, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
       `;
       result = await pool.query(query, [
         name.trim(),
         company || '',
         phone.trim(),
+        normPhone,
         email || '',
         project_interest || 'مشروع وتطوير أعمال',
         Math.max(0, parseFloat(total_value) || 0),
@@ -1006,7 +1020,12 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
-    const existingPhoneMap = await getExistingClientsByPhoneMap(clientDb);
+    const incomingNorms = [];
+    for (const c of clients) {
+      const n = normalizePhone((c && c.phone) || '');
+      if (n) incomingNorms.push(n);
+    }
+    const existingPhoneMap = await getExistingClientsByPhoneMap(clientDb, incomingNorms);
     const seenInBatch = new Set();
 
     const newEntries = [];
@@ -1084,10 +1103,10 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
     const insertedIds = [];
     for (const entry of newEntries) {
       const insertRes = await clientDb.query(
-        `INSERT INTO clients (name, company, phone, email, project_interest, total_value, notes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'عميل جديد')
+        `INSERT INTO clients (name, company, phone, normalized_phone, email, project_interest, total_value, notes, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'عميل جديد')
          RETURNING id`,
-        [entry.name, entry.company, entry.phone, entry.email, entry.project_interest, entry.total_value, entry.notes]
+        [entry.name, entry.company, entry.phone, normalizePhone(entry.phone), entry.email, entry.project_interest, entry.total_value, entry.notes]
       );
       insertedIds.push(insertRes.rows[0].id);
     }
@@ -1097,16 +1116,17 @@ app.post('/api/clients/bulk-create', authMiddleware, requireOwner, async (req, r
       for (const match of archivedMatches) {
         await clientDb.query(
           `UPDATE clients
-           SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5,
-               total_value = $6, notes = $7, status = 'عميل جديد',
+           SET name = $1, company = $2, phone = $3, normalized_phone = $4, email = $5, project_interest = $6,
+               total_value = $7, notes = $8, status = 'عميل جديد',
                assigned_sales_id = NULL, assigned_sales_name = NULL,
                postponed_until = NULL, postpone_reason = '', is_reminder_resolved = FALSE,
                archived_at = NULL
-           WHERE id = $8`,
+           WHERE id = $9`,
           [
             match.incoming.name,
             match.incoming.company,
             match.incoming.phone,
+            normalizePhone(match.incoming.phone),
             match.incoming.email,
             match.incoming.project_interest,
             match.incoming.total_value,
@@ -1197,13 +1217,14 @@ const updateClientHandler = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE clients 
-       SET name = $1, company = $2, phone = $3, email = $4, project_interest = $5, total_value = $6, notes = $7
-       WHERE id = $8
+       SET name = $1, company = $2, phone = $3, normalized_phone = $4, email = $5, project_interest = $6, total_value = $7, notes = $8
+       WHERE id = $9
        RETURNING *`,
       [
         name.trim(),
         company ? company.trim() : '',
         phone.trim(),
+        normalizePhone(phone),
         email ? email.trim() : '',
         project_interest ? project_interest.trim() : 'مشروع وتطوير أعمال',
         Math.max(0, parseFloat(total_value) || 0),
@@ -3395,15 +3416,6 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
   }
 
   try {
-    let savedAttachment = null;
-    if (attachment) {
-      try {
-        savedAttachment = await saveChatAttachmentToDisk(attachment);
-      } catch (attErr) {
-        return res.status(400).json({ success: false, message: attErr.message || 'تعذر رفع المرفق' });
-      }
-    }
-
     const senderId = req.user.id;
     const senderName = req.user.full_name || req.user.fullName || (isUserOwner(req.user) ? 'المدير العام' : 'سيلز');
     const senderRole = req.user.role || 'سيلز (Sales)';
@@ -3424,6 +3436,15 @@ app.post('/api/chat/messages', authMiddleware, async (req, res) => {
         return res.status(404).json({ success: false, message: 'المستلم غير موجود' });
       }
       targetRecipientName = userRes.rows[0].full_name;
+    }
+
+    let savedAttachment = null;
+    if (attachment) {
+      try {
+        savedAttachment = await saveChatAttachmentToDisk(attachment);
+      } catch (attErr) {
+        return res.status(400).json({ success: false, message: attErr.message || 'تعذر رفع المرفق' });
+      }
     }
 
     const result = await pool.query(`

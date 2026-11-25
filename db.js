@@ -60,9 +60,21 @@ async function initDB() {
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by_id INT;`);
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by_name VARCHAR(100);`);
     await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;`);
+    await client.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS normalized_phone VARCHAR(30);`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_clients_normalized_phone ON clients(normalized_phone);`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_clients_archived_at ON clients(archived_at);`);
     await client.query(`UPDATE clients SET archived_at = COALESCE(created_at, NOW()) WHERE status IN ('تم التعاقد', 'ملغي') AND archived_at IS NULL;`);
+    await client.query(`
+      UPDATE clients
+      SET normalized_phone = CASE
+        WHEN regexp_replace(phone, '\\D', '', 'g') ~ '^00201[0-9]{9}$' THEN '0' || substring(regexp_replace(phone, '\\D', '', 'g') FROM 5)
+        WHEN regexp_replace(phone, '\\D', '', 'g') ~ '^201[0-9]{9}$' THEN '0' || substring(regexp_replace(phone, '\\D', '', 'g') FROM 3)
+        WHEN regexp_replace(phone, '\\D', '', 'g') ~ '^1[0-9]{9}$' THEN '0' || regexp_replace(phone, '\\D', '', 'g')
+        ELSE regexp_replace(phone, '\\D', '', 'g')
+      END
+      WHERE phone IS NOT NULL AND phone != '' AND (normalized_phone IS NULL OR normalized_phone = '');
+    `);
 
     // 3. جدول سجل العمليات والرقابة (Audit Activity Logs)
     await client.query(`

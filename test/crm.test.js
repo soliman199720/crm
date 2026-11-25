@@ -101,3 +101,9 @@ test('Chat attachment upload and cleanup are implemented in server.js', () => {
   assert.equal(serverCode.includes('deleteChatAttachmentFiles'), true);
   assert.equal(serverCode.includes('attachment_url'), true);
 });
+
+test('Chat uploads are protected and normalized_phone is indexed', () => {
+  const serverCode = fs.readFileSync(path.join(rootDir, 'server.js'), 'utf8');
+  assert.equal(serverCode.includes("app.use('/uploads/chat', authMiddleware)"), true);
+  assert.equal(serverCode.includes('normalized_phone'), true);
+});
