@@ -1726,8 +1726,7 @@ app.get('/api/sales-portal/reminders', authMiddleware, async (req, res) => {
         status, 
         notes, 
         postponed_until, 
-        postpone_reason,
-        CASE WHEN postponed_until <= NOW() THEN true ELSE false END AS is_due
+        postpone_reason
       FROM clients
       WHERE status = 'مؤجل' AND postponed_until IS NOT NULL AND is_reminder_resolved = false
     `;
@@ -1736,10 +1735,17 @@ app.get('/api/sales-portal/reminders', authMiddleware, async (req, res) => {
       query += ` AND assigned_sales_id = $1`;
       params.push(req.user.id);
     }
-    query += ` ORDER BY is_due DESC, postponed_until ASC`;
+    query += ` ORDER BY postponed_until ASC`;
 
     const result = await pool.query(query, params);
-    const reminders = result.rows;
+    const nowMs = Date.now();
+    // حساب الاستحقاق بتوقيت الخادم المحلي لتجنب اختلاف المنطقة الزمنية في PostgreSQL
+    const reminders = result.rows
+      .map(r => ({
+        ...r,
+        is_due: r.postponed_until ? new Date(r.postponed_until).getTime() <= nowMs : false
+      }))
+      .sort((a, b) => Number(b.is_due) - Number(a.is_due) || new Date(a.postponed_until) - new Date(b.postponed_until));
     const dueCount = reminders.filter(r => r.is_due).length;
     res.json({ success: true, reminders, due_count: dueCount });
   } catch (err) {

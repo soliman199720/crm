@@ -85,22 +85,21 @@ function showUnitToast(message, type = 'success') {
   setTimeout(() => toast.remove(), 3500);
 }
 
+let detailsFetchController = null;
+
+function abortPendingDetailsFetch() {
+  if (detailsFetchController) {
+    try { detailsFetchController.abort(); } catch (_) {}
+    detailsFetchController = null;
+  }
+}
+
+window.addEventListener('pagehide', abortPendingDetailsFetch);
+window.addEventListener('beforeunload', abortPendingDetailsFetch);
+
 async function loadProjectDetails() {
   const root = document.getElementById('projectDetailsRoot');
   if (!root) return;
-
-  // التحقق من دور المستخدم الحالي لضبط رابط العودة وصلاحية حذف الوحدات
-  try {
-    const meRes = await fetch('/api/me');
-    if (meRes.ok) {
-      const meData = await meRes.json();
-      const role = meData.user?.role || '';
-      currentUserIsOwner = role.includes('Owner') || role.includes('المالك');
-      if (typeof window.applyProjectsTopbarForRole === 'function') {
-        window.applyProjectsTopbarForRole(meData.user);
-      }
-    }
-  } catch (_) {}
 
   const projectId = getProjectIdFromUrl();
   if (!projectId) {
@@ -108,11 +107,30 @@ async function loadProjectDetails() {
     return;
   }
 
-  try {
-    const res = await fetch(`/api/projects/${projectId}`);
-    const data = await res.json();
+  abortPendingDetailsFetch();
+  detailsFetchController = new AbortController();
+  const signal = detailsFetchController.signal;
 
-    if (!res.ok || !data.success || !data.project) {
+  try {
+    // إرسال طلب المستخدم وطلب تفاصيل المشروع بالتوازي لتسريع الفتح
+    const [meData, projectRes] = await Promise.all([
+      fetch('/api/me', { signal })
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null),
+      fetch(`/api/projects/${projectId}`, { signal })
+    ]);
+
+    if (meData && meData.user) {
+      const role = meData.user.role || '';
+      currentUserIsOwner = role.includes('Owner') || role.includes('المالك');
+      if (typeof window.applyProjectsTopbarForRole === 'function') {
+        window.applyProjectsTopbarForRole(meData.user);
+      }
+    }
+
+    const data = await projectRes.json();
+
+    if (!projectRes.ok || !data.success || !data.project) {
       renderError(root, data.message || 'تعذر العثور على هذا المشروع.');
       return;
     }
@@ -122,6 +140,7 @@ async function loadProjectDetails() {
     injectAddUnitModal(currentProject);
     await loadProjectUnits(currentProject.id);
   } catch (err) {
+    if (err && err.name === 'AbortError') return;
     renderError(root, 'حدث خطأ أثناء الاتصال بالخادم: ' + err.message);
   }
 }

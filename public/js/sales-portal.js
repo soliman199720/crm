@@ -1563,6 +1563,16 @@ async function checkDueReminders() {
     const reminders = data.reminders || [];
     activeRemindersList = reminders;
 
+    // تحديث كروت تبويب "مؤجل" دورياً ليتحول الكارت تلقائياً إلى "مستحق الآن" عند حلول الموعد
+    if (
+      typeof currentPortalView !== 'undefined' &&
+      currentPortalView === 'pipeline' &&
+      Array.isArray(filteredClients) &&
+      filteredClients.some(c => c.status === 'مؤجل' && c.postponed_until)
+    ) {
+      renderDealsPipeline();
+    }
+
     const bellBtn = document.getElementById('reminderBellBtn');
     const bellBadge = document.getElementById('reminderBellBadge');
     const dropdownBadge = document.getElementById('dropdownBadgeText');

@@ -8,6 +8,24 @@
   let currentUser = null;
   let teamMembers = [];
   let sseSource = null;
+  let isPageUnloading = false;
+
+  function closeSseConnection() {
+    isPageUnloading = true;
+    if (sseSource) {
+      try { sseSource.close(); } catch (_) {}
+      sseSource = null;
+    }
+  }
+
+  window.addEventListener('pagehide', closeSseConnection);
+  window.addEventListener('beforeunload', closeSseConnection);
+  window.addEventListener('pageshow', (event) => {
+    isPageUnloading = false;
+    if (event.persisted && currentUser && !sseSource) {
+      setupSseConnection();
+    }
+  });
 
   // حالة الشات النشط: إما { type: 'group' } أو { type: 'private', user: { id, full_name, role } }
   let currentChat = { type: 'group' };
@@ -283,6 +301,7 @@
       };
 
       sseSource.onerror = async () => {
+        if (isPageUnloading) return;
         const subtitle = document.getElementById('chatHeaderSubtitle');
         try {
           const authCheck = await fetch('/api/me');

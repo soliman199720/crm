@@ -6,6 +6,7 @@
   function dismissGlobalLoader() {
     const loader = document.getElementById('globalCrmLoader');
     if (loader && !loader.classList.contains('fade-out')) {
+      loader.style.pointerEvents = 'none';
       loader.classList.add('fade-out');
       document.body.classList.add('page-revealed');
       setTimeout(function() {
@@ -137,16 +138,21 @@
     });
   };
 
-  // صمام أمان عند اكتمال تحميل عناصر الصفحة بالكامل window.load
-  if (document.readyState === 'complete') {
-    setTimeout(dismissGlobalLoader, 180);
+  // إخفاء شاشة التحميل فور جاهزية الهيكل دون انتظار الموارد الخارجية (الخطوط/الأيقونات)
+  if (document.readyState === 'interactive' || document.readyState === 'complete') {
+    setTimeout(dismissGlobalLoader, 80);
   } else {
-    window.addEventListener('load', function() {
-      setTimeout(dismissGlobalLoader, 180);
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(dismissGlobalLoader, 80);
     });
   }
 
+  // إخفاء فوري عند العودة عبر أزرار المتصفح (bfcache)
+  window.addEventListener('pageshow', function(event) {
+    if (event.persisted) dismissGlobalLoader();
+  });
+
   // صمام أمان زمني إضافي في حالة تأخر الـ API أو أي طلب شبكة
-  setTimeout(dismissGlobalLoader, 1200);
+  setTimeout(dismissGlobalLoader, 600);
 })();
 

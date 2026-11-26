@@ -19,6 +19,16 @@ let isLoadingMoreProjects = false;
 let searchDebounceTimer = null;
 let currentProjectsFetchController = null;
 
+function abortPendingProjectsFetch() {
+  if (currentProjectsFetchController) {
+    try { currentProjectsFetchController.abort(); } catch (_) {}
+    currentProjectsFetchController = null;
+  }
+}
+
+window.addEventListener('pagehide', abortPendingProjectsFetch);
+window.addEventListener('beforeunload', abortPendingProjectsFetch);
+
 // تحديد التصنيف الحالي بناءً على مسار الصفحة
 function getCurrentCategory() {
   const path = window.location.pathname.toLowerCase();
@@ -51,18 +61,20 @@ async function initProjectsPage() {
   const container = document.querySelector('.projects-hub-container') || document.querySelector('.projects-subpage-container');
   if (!container) return;
 
-  // التحقق من دور المستخدم الحالي (أونر أم سيلز) لضبط رابط العودة وصلاحية الحذف
-  try {
-    const meRes = await fetch('/api/me');
-    if (meRes.ok) {
-      const meData = await meRes.json();
-      const role = meData.user?.role || '';
-      currentUserIsOwner = role.includes('Owner') || role.includes('المالك');
-      if (typeof window.applyProjectsTopbarForRole === 'function') {
-        window.applyProjectsTopbarForRole(meData.user);
+  // إرسال طلب بيانات المستخدم بالتوازي مع تجهيز الواجهة وجلب المشروعات
+  const mePromise = fetch('/api/me')
+    .then(res => (res.ok ? res.json() : null))
+    .then(meData => {
+      if (meData && meData.user) {
+        const role = meData.user.role || '';
+        currentUserIsOwner = role.includes('Owner') || role.includes('المالك');
+        if (typeof window.applyProjectsTopbarForRole === 'function') {
+          window.applyProjectsTopbarForRole(meData.user);
+        }
       }
-    }
-  } catch (_) {}
+      return meData;
+    })
+    .catch(() => null);
 
   const currentCat = getCurrentCategory();
 
@@ -85,12 +97,10 @@ async function initProjectsPage() {
             <input type="text" id="projectSearchInput" placeholder="بحث بالاسم، الموقع، أو التفاصيل..." oninput="handleSearchProjects()">
           </div>
 
-          ${currentUserIsOwner ? `
-            <button class="btn-add-main-project" onclick="openAddProjectModal()">
-              <i class="fa-solid fa-plus-circle"></i>
-              <span>إضافة مشروع جديد</span>
-            </button>
-          ` : ''}
+          <button class="btn-add-main-project d-none" id="btnAddMainProject" onclick="openAddProjectModal()">
+            <i class="fa-solid fa-plus-circle"></i>
+            <span>إضافة مشروع جديد</span>
+          </button>
         </div>
       </section>
 
@@ -107,9 +117,61 @@ async function initProjectsPage() {
 
   // حقن النوافذ المنبثقة المشتركة (إضافة مشروع + تأكيد الحذف)
   injectModals();
+  setupProjectsSubtabsNavigation();
 
-  // جلب البيانات من الخادم
-  await loadProjects();
+  // جلب المشروعات بالتوازي مع /api/me
+  await loadProjects(undefined, mePromise);
+
+  if (currentUserIsOwner) {
+    const addBtn = document.getElementById('btnAddMainProject');
+    if (addBtn) addBtn.classList.remove('d-none');
+  }
+}
+
+// تفعيل التنقل السلس بين تبويبات المشروعات دون إعادة تحميل الصفحة بالكامل
+function syncProjectsCategoryUi() {
+  const cat = getCurrentCategory();
+  const titleSpan = document.querySelector('.projects-bar-title h2 span');
+  if (titleSpan) titleSpan.textContent = getCategoryLabel(cat);
+
+  document.querySelectorAll('.projects-subtabs-nav .subtab-pill').forEach(link => {
+    const href = (link.getAttribute('href') || '').toLowerCase();
+    const isMatch =
+      (cat === 'all' && href === '/projects') ||
+      (cat !== 'all' && href.endsWith('/' + cat));
+    link.classList.toggle('active', isMatch);
+  });
+
+  document.title = `${getCategoryLabel(cat)} | نظام إدارة العملاء CRM`;
+}
+
+function setupProjectsSubtabsNavigation() {
+  const nav = document.querySelector('.projects-subtabs-nav');
+  if (!nav || nav.dataset.spaBound === 'true') return;
+  nav.dataset.spaBound = 'true';
+
+  nav.addEventListener('click', (e) => {
+    const link = e.target.closest('a.subtab-pill');
+    if (!link) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || link.target === '_blank') return;
+
+    const href = link.getAttribute('href');
+    if (!href || !href.startsWith('/projects')) return;
+
+    e.preventDefault();
+    if (window.location.pathname === href) return;
+
+    history.pushState({ path: href }, '', href);
+    syncProjectsCategoryUi();
+    loadProjects();
+  });
+
+  window.addEventListener('popstate', () => {
+    if (window.location.pathname.startsWith('/projects')) {
+      syncProjectsCategoryUi();
+      loadProjects();
+    }
+  });
 }
 
 // 2. حقن النوافذ المنبثقة
@@ -224,7 +286,7 @@ function injectModals() {
 }
 
 // 3. جلب المشروعات من الخادم (مع دعم البحث المباشر في قاعدة البيانات)
-async function loadProjects(searchQuery) {
+async function loadProjects(searchQuery, mePromise = null) {
   const currentCat = getCurrentCategory();
   const grid = document.getElementById('projectsGrid');
   const countPill = document.getElementById('projectsCountPill');
@@ -245,9 +307,14 @@ async function loadProjects(searchQuery) {
       queryParams.set('search', effectiveSearch);
     }
 
-    const res = await fetch(`/api/projects?${queryParams.toString()}`, {
+    const fetchPromise = fetch(`/api/projects?${queryParams.toString()}`, {
       signal: currentProjectsFetchController.signal
     });
+
+    const [res] = await Promise.all([
+      fetchPromise,
+      mePromise || Promise.resolve()
+    ]);
     if (!res.ok) throw new Error('فشل جلب المشروعات');
 
     const data = await res.json();
