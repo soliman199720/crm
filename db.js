@@ -2,17 +2,21 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
+const DB_TIMEZONE = (process.env.DB_TIMEZONE || 'Africa/Cairo').replace(/[^A-Za-z0-9_/+\\-]/g, '');
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'crm',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || '',
+  options: `-c timezone=${DB_TIMEZONE}`,
 });
 
 async function initDB() {
+  let client;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
     console.log('✅ تم الاتصال بقاعدة البيانات PostgreSQL (crm) بنجاح!');
 
     // 1. جدول المستخدمين
@@ -266,11 +270,12 @@ async function initDB() {
       await client.query(`UPDATE users SET email = '1@1.com', role = 'المالك (Owner)' WHERE id = $1`, [checkAdmin.rows[0].id]);
     }
 
-    client.release();
     return true;
   } catch (err) {
     console.error('❌ خطأ في تهيئة قاعدة البيانات:', err.message);
     return false;
+  } finally {
+    if (client) client.release();
   }
 }
 

@@ -14,7 +14,37 @@ let infiniteObserver = null;
 document.addEventListener('DOMContentLoaded', () => {
   verifySession();
   initInfiniteScrollObserver();
+  initExcelDropZone();
 });
+
+// تفعيل السحب والإفلات (Drag & Drop) لمنطقة رفع ملف الإكسيل
+function initExcelDropZone() {
+  const dropZone = document.getElementById('excelDropZone');
+  if (!dropZone || dropZone.dataset.dropBound === 'true') return;
+  dropZone.dataset.dropBound = 'true';
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length > 0) {
+      handleExcelUpload({ target: { files } });
+    }
+  });
+}
 
 // 1. التحقق من جلسة الأونر
 async function verifySession() {
@@ -1444,7 +1474,7 @@ function getStatusClass(status) {
   if (status.includes('جديد')) return 'status-new';
   if (status.includes('إسناد') || status.includes('متابعة')) return 'status-assigned';
   if (status.includes('تواصل')) return 'status-contacted';
-  if (status.includes('تفاوض') || status.includes('معاينة')) return 'status-negotiating';
+  if (status.includes('تفاوض') || status.includes('معاينة') || status === 'مهتم') return 'status-negotiating';
   if (status.includes('إغلاق') || status.includes('تعاقد')) return 'status-closed';
   return 'status-assigned';
 }

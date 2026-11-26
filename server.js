@@ -118,7 +118,11 @@ function requireOwner(req, res, next) {
 async function pageGuard(req, res, next) {
   const p = req.path.toLowerCase().replace(/\/+$/, '') || '/';
   const isOwnerPage = ['/crm', '/crm.html', '/sales', '/sales.html', '/users', '/users.html', '/logs', '/logs.html'].includes(p);
-  const isSharedAuthPage = ['/sales-portal', '/sales-portal.html'].includes(p) || p.startsWith('/projects') || p.startsWith('/project-details');
+  const isSharedAuthPage =
+    ['/sales-portal', '/sales-portal.html', '/sales-archive', '/sales-archive.html'].includes(p) ||
+    p.startsWith('/projects') ||
+    p.startsWith('/project-details') ||
+    (p.endsWith('.html') && p !== '/index.html');
 
   if (!isOwnerPage && !isSharedAuthPage) {
     return next();
@@ -3394,6 +3398,27 @@ async function saveChatAttachmentToDisk(attachment) {
   const buffer = Buffer.from(match[2], 'base64');
   if (buffer.length === 0 || buffer.length > MAX_CHAT_ATTACHMENT_BYTES) {
     throw new Error('حجم الملف يتجاوز الحد الأقصى المسموح (10 ميجابايت)');
+  }
+
+  // التحقق من التوقيع الفعلي للملف (Magic Bytes) لمنع انتحال الصيغ
+  const isPng = buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47;
+  const isJpg = buffer.length >= 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
+  const isGif = buffer.length >= 4 && buffer.slice(0, 4).toString('ascii') === 'GIF8';
+  const isWebp = buffer.length >= 12 && buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP';
+  const isPdf = buffer.length >= 5 && buffer.slice(0, 5).toString('ascii') === '%PDF-';
+  const isZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04;
+  const isOle = buffer.length >= 4 && buffer[0] === 0xD0 && buffer[1] === 0xCF && buffer[2] === 0x11 && buffer[3] === 0xE0;
+
+  if (attachType === 'image' && !(isPng || isJpg || isGif || isWebp)) {
+    throw new Error('محتوى الصورة لا يطابق صيغة صورة صالحة');
+  }
+  if (attachType === 'pdf' && !isPdf) {
+    throw new Error('محتوى الملف لا يطابق صيغة PDF صالحة');
+  }
+  if (attachType === 'excel') {
+    if (ext === 'xlsx' && !isZip) throw new Error('محتوى ملف XLSX غير صالح');
+    if (ext === 'xls' && !isOle) throw new Error('محتوى ملف XLS غير صالح');
+    if (ext === 'csv' && buffer.includes(0)) throw new Error('محتوى ملف CSV غير صالح');
   }
 
   const uploadDir = path.join(__dirname, 'public', 'uploads', 'chat');
