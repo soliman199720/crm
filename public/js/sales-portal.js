@@ -233,7 +233,7 @@ function renderStats(stats) {
   const closedValEl = document.getElementById('statClosedValue');
 
   if (totalEl) totalEl.textContent = stats.totalClients || 0;
-  if (inProgressEl) inProgressEl.textContent = stats.inProgress || 0;
+  if (inProgressEl) inProgressEl.textContent = (stats.inProgress || 0) + (stats.interested || 0);
   if (contractedEl) contractedEl.textContent = stats.contracted || 0;
   if (closedValEl) {
     const val = Number(stats.closedDealsValue || 0);
@@ -257,6 +257,13 @@ function initSmartDefaultView() {
   const hasProgress = allClients.some(c => c.status === 'قيد المتابعة');
   if (hasProgress) {
     statusFilter.value = 'قيد المتابعة';
+    return;
+  }
+
+  // فحص هل لديه عملاء مهتمين؟
+  const hasInterested = allClients.some(c => c.status === 'مهتم');
+  if (hasInterested) {
+    statusFilter.value = 'مهتم';
     return;
   }
 
@@ -491,6 +498,14 @@ const DEAL_STAGES = [
     targetStatus: 'قيد المتابعة'
   },
   {
+    id: 'interested',
+    title: 'مهتم 🔥',
+    stageKey: 'stage-interested',
+    icon: 'fa-solid fa-fire',
+    statuses: ['مهتم'],
+    targetStatus: 'مهتم'
+  },
+  {
     id: 'delayed',
     title: 'مؤجل / اتصال لاحق',
     stageKey: 'stage-delayed',
@@ -619,6 +634,7 @@ function updateTabCounts() {
   const countAll = allClients.length;
   const countNew = allClients.filter(c => c.status === 'عميل جديد' || c.status === 'تم الإسناد').length;
   const countProgress = allClients.filter(c => c.status === 'قيد المتابعة').length;
+  const countInterested = allClients.filter(c => c.status === 'مهتم').length;
   const countDelayed = allClients.filter(c => c.status === 'مؤجل').length;
   const countWon = allClients.filter(c => c.status === 'تم التعاقد').length;
   const countLost = allClients.filter(c => c.status === 'ملغي').length;
@@ -627,6 +643,7 @@ function updateTabCounts() {
 
   const elNew = document.getElementById('tabCountNew');
   const elProgress = document.getElementById('tabCountProgress');
+  const elInterested = document.getElementById('tabCountInterested');
   const elDelayed = document.getElementById('tabCountDelayed');
   const elArchive = document.getElementById('tabCountArchive');
   const elAllActive = document.getElementById('tabCountAllActive');
@@ -635,6 +652,7 @@ function updateTabCounts() {
 
   if (elNew) elNew.textContent = countNew;
   if (elProgress) elProgress.textContent = countProgress;
+  if (elInterested) elInterested.textContent = countInterested;
   if (elDelayed) elDelayed.textContent = countDelayed;
   if (elArchive) elArchive.textContent = countArchive;
   if (elAllActive) elAllActive.textContent = countAllActive;
@@ -1151,6 +1169,7 @@ function getStatusClass(status) {
     case 'عميل جديد': return 'status-new';
     case 'تم الإسناد': return 'status-assigned';
     case 'قيد المتابعة': return 'status-progress';
+    case 'مهتم': return 'status-interested';
     case 'تم التعاقد': return 'status-contracted';
     case 'مؤجل': return 'status-delayed';
     case 'ملغي': return 'status-cancelled';
@@ -2037,6 +2056,16 @@ const WHATSAPP_STAGE_TEMPLATES = {
       'تحياتي لحضرتك يا أستاذ {name} ⏳ معاك {sales}. حبيت أنوه إن الوحدات ذات العائد الأعلى في ({project}) الحجز عليها سريع قبل الزيادة السعرية للمرحلة الجاية، لو جاهز نثبت الحجز أو نكمل الإجراءات أنا معاك.'
     ]
   },
+  interested: {
+    label: 'مهتم / عميل ساخن 🔥',
+    messages: [
+      'أهلاً بحضرتك يا أستاذ {name} 🔥 معاك {sales} من إدارة المبيعات بالشركة المطوّرة. مبسوط جداً باهتمامك الجاد في ({project})، تحب نثبت ميعاد المعاينة أو زيارة مقر الشركة الأسبوع ده عشان نراجع العقود والوحدة على الطبيعة؟',
+      'مساء الخير يا أستاذ {name} ✨ معاك {sales}. جهزت لحضرتك تفاصيل خطة السداد النهائية وأولوية الحجز للوحدة اللي اخترتها في ({project})، تحب نراجعها مع بعض دلوقتي؟',
+      'السلام عليكم أستاذ {name} 🤝 معاك {sales}. حبيت أبلغك إننا نقدر نحجز لحضرتك الوحدة المميزة في ({project}) بالسعر الحالي قبل أي زيادة في المرحلة الجاية، قولي إيه الخطوة المناسبة ليك النهارده.',
+      'أهلاً يا فندم أستاذ {name} 📄 معاك {sales}. لو في أي أوراق أو تفاصيل تخص التعاقد وجدية الحجز في ({project}) محتاج نوضحها لحضرتك، أنا معاك خطوة بخطوة.',
+      'تحياتي لحضرتك يا أستاذ {name} 🏆 معاك {sales}. متحمسين جداً لانضمامك لمستثمرينا في ({project})، قولّي الوقت الأنسب ليك النهارده عشان نكمل إجراءات الحجز بكل سلاسة.'
+    ]
+  },
   delayed: {
     label: 'مؤجل / اتصال لاحق',
     messages: [
@@ -2071,6 +2100,7 @@ const WHATSAPP_STAGE_TEMPLATES = {
 
 function getWhatsAppStageKey(status) {
   if (status === 'قيد المتابعة') return 'progress';
+  if (status === 'مهتم') return 'interested';
   if (status === 'مؤجل') return 'delayed';
   if (status === 'تم التعاقد') return 'contracted';
   if (status === 'ملغي') return 'lost';

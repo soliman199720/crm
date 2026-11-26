@@ -1114,6 +1114,12 @@ body.page-revealed .sales-container {
   border-color: #fde68a;
 }
 
+.status-interested {
+  background: #ffe4e6;
+  color: #be123c;
+  border-color: #fecdd3;
+}
+
 .status-contracted {
   background: #d1fae5;
   color: #047857;
@@ -2500,6 +2506,20 @@ body.page-revealed .sales-container {
 }
 .stepper-step.is-active.stage-progress .step-main {
   color: #c2410c;
+  font-weight: 800;
+}
+
+.stepper-step.is-active.stage-interested {
+  border-color: #fda4af;
+  background: #fff1f2;
+}
+.stepper-step.is-active.stage-interested .stepper-step-circle {
+  background: linear-gradient(135deg, #f43f5e, #be123c);
+  color: #ffffff;
+  animation: activePulseOrange 2.5s infinite;
+}
+.stepper-step.is-active.stage-interested .step-main {
+  color: #be123c;
   font-weight: 800;
 }
 

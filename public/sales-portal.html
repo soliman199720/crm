@@ -199,6 +199,7 @@
           <select id="statusFilter" onchange="filterClients(true)">
             <option value="عميل جديد" selected>عملاء جدد وإسناد (الافتراضي)</option>
             <option value="قيد المتابعة">قيد المتابعة والتفاوض</option>
+            <option value="مهتم">مهتم (عميل ساخن 🔥)</option>
             <option value="مؤجل">مؤجل / اتصال لاحق</option>
             <option value="all_active">جميع الصفقات النشطة</option>
             <option value="all">جميع العملاء المسندين</option>
@@ -249,6 +250,11 @@
           <i class="fa-solid fa-clock-rotate-left"></i>
           <span>قيد المتابعة والتفاوض</span>
           <span class="tab-badge" id="tabCountProgress">0</span>
+        </button>
+        <button type="button" class="pipeline-tab" data-status="مهتم" onclick="selectPipelineTab('مهتم')">
+          <i class="fa-solid fa-fire"></i>
+          <span>مهتم 🔥</span>
+          <span class="tab-badge" id="tabCountInterested">0</span>
         </button>
         <button type="button" class="pipeline-tab" data-status="مؤجل" onclick="selectPipelineTab('مؤجل')">
           <i class="fa-solid fa-pause"></i>
@@ -564,6 +570,7 @@
               <select id="activityStatusChangeSelect" class="form-control-smart" style="font-size: 0.85rem; padding: 6px 10px;">
                 <option value="">الحفاظ على مرحلة الصفقة الحالية</option>
                 <option value="قيد المتابعة">نقل الصفقة إلى [قيد المتابعة]</option>
+                <option value="مهتم">نقل الصفقة إلى [مهتم 🔥]</option>
                 <option value="مؤجل">نقل الصفقة إلى [مؤجل]</option>
                 <option value="تم التعاقد">نقل الصفقة إلى [تم التعاقد 🏆]</option>
                 <option value="ملغي">نقل الصفقة إلى [ملغي / غير مهتم]</option>

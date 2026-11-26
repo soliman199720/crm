@@ -49,7 +49,7 @@ function parsePositiveInt(val) {
   return Number.isInteger(num) && num > 0 ? num : null;
 }
 
-const ALLOWED_CLIENT_STATUSES = ['عميل جديد', 'جديد', 'تم الإسناد', 'قيد المتابعة', 'مؤجل', 'تم التعاقد', 'ملغي'];
+const ALLOWED_CLIENT_STATUSES = ['عميل جديد', 'جديد', 'تم الإسناد', 'قيد المتابعة', 'مهتم', 'مؤجل', 'تم التعاقد', 'ملغي'];
 const ARCHIVED_CLIENT_STATUSES = ['تم التعاقد', 'ملغي'];
 
 // دالة توحيد صيغة رقم الهاتف للمقارنة ومنع التكرار
@@ -1642,6 +1642,9 @@ app.put('/api/clients/:id/status', authMiddleware, async (req, res) => {
     } else if (status === 'قيد المتابعة') {
       actionType = 'نقل لقيد المتابعة والتفاوض';
       actionDetails = `🤝 قام (${req.user.full_name || 'مسؤول السيلز'}) ببدء التفاوض والمتابعة مع العميل (${client.name})${dealFormatted}${projectFormatted}`;
+    } else if (status === 'مهتم') {
+      actionType = 'تحديد العميل كـ مهتم 🔥';
+      actionDetails = `🔥 قام (${req.user.full_name || 'مسؤول السيلز'}) بتصنيف العميل (${client.name}) كـ [مهتم / عميل ساخن]${dealFormatted}${projectFormatted}`;
     } else if (status === 'عميل جديد' || status === 'جديد') {
       actionType = 'إعادة لعميل جديد / إسناد';
       actionDetails = `🎯 قام (${req.user.full_name || 'مسؤول السيلز'}) بإعادة العميل (${client.name}) إلى مرحلة عميل جديد / إسناد`;
@@ -2087,6 +2090,7 @@ app.get('/api/sales-portal/stats', authMiddleware, async (req, res) => {
     const totalClients = parseInt(totalRes.rows[0].total, 10);
     const contracted = statusBreakdown['تم التعاقد'] || 0;
     const inProgress = statusBreakdown['قيد المتابعة'] || 0;
+    const interested = statusBreakdown['مهتم'] || 0;
     const delayed = statusBreakdown['مؤجل'] || 0;
     const cancelled = statusBreakdown['ملغي'] || 0;
     const conversionRate = totalClients > 0 ? Math.round((contracted / totalClients) * 100) : 0;
@@ -2095,7 +2099,7 @@ app.get('/api/sales-portal/stats', authMiddleware, async (req, res) => {
     let performanceScore = 80;
     if (totalClients > 0) {
       const winFactor = Math.min(50, Math.round((contracted / totalClients) * 100));
-      const activityFactor = Math.min(30, inProgress * 10 + delayed * 5);
+      const activityFactor = Math.min(30, inProgress * 10 + interested * 12 + delayed * 5);
       const disciplineFactor = cancelled > 0 ? 10 : 20;
       performanceScore = Math.min(100, Math.max(40, winFactor + activityFactor + disciplineFactor));
     }
@@ -2120,6 +2124,7 @@ app.get('/api/sales-portal/stats', authMiddleware, async (req, res) => {
         totalClients,
         newClients: (statusBreakdown['عميل جديد'] || 0) + (statusBreakdown['تم الإسناد'] || 0),
         inProgress,
+        interested,
         contracted,
         delayed,
         cancelled,
